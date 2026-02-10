@@ -15,8 +15,8 @@ class Settings(BaseSettings):
     
     # Google Gemini
     google_api_key: str = ""
-    llm_model: str = "gemini-2.0-flash-001"
-    embedding_model: str = "models/text-embedding-004"
+    llm_model: str = "gemini-2.5-flash"
+    embedding_model: str = "models/gemini-embedding-001"
     
     # App
     app_name: str = "Menu Green"

@@ -4,7 +4,7 @@
 DROP FUNCTION IF EXISTS match_recipes;
 
 CREATE OR REPLACE FUNCTION match_recipes(
-    query_embedding VECTOR(768),
+    query_embedding VECTOR(3072),
     match_threshold FLOAT DEFAULT 0.5,
     match_count INT DEFAULT 5
 )

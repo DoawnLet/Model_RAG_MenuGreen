@@ -39,7 +39,7 @@ CREATE TABLE recipes (
     cook_time_minutes INT,
     servings INT,
     image_url TEXT,
-    embedding VECTOR(768) -- For RAG
+    embedding VECTOR(3072) -- For RAG
 );
 
 -- Recipe Ingredients (Join Table)
