@@ -3,7 +3,10 @@ import os
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
-API_KEY = "AIzaSyAJpLPLjWy8OQRgxFr5xJwSSDvFM5gZW-s"
+from app.core.config import get_settings
+
+settings = get_settings()
+API_KEY = settings.google_api_key
 
 async def test_generation():
     print("\n--- Testing Generation (gemini-1.5-flash) ---")
