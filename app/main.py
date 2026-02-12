@@ -3,18 +3,29 @@ Menu Green - FastAPI Entry Point
 Exposes the LangGraph orchestrator via REST API.
 """
 from contextlib import asynccontextmanager
-from typing import Optional
-from fastapi import FastAPI, HTTPException
+from typing import Optional, Literal, cast
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, BaseMessage
 import json
 import asyncio
+import logging
 
 from app.agents.orchestrator import orchestrator, AgentState
 from app.core.config import get_settings
 from app.core.supabase_client import SupabaseClient
+from app.core.errors import (
+    MenuGreenException,
+    ErrorResponse,
+    ErrorCode,
+    GeminiAPIException,
+    SupabaseException,
+)
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -48,6 +59,52 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============================================================================
+# Exception Handlers
+# ============================================================================
+
+@app.exception_handler(MenuGreenException)
+async def menu_green_exception_handler(request: Request, exc: MenuGreenException):
+    """Handle custom Menu Green exceptions."""
+    logger.error(f"MenuGreenException: {exc.code} - {exc.message}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorResponse(
+            code=exc.code,
+            message=exc.message,
+            details=exc.details,
+            suggestion=exc.suggestion
+        ).model_dump()
+    )
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    """Handle ValueError exceptions."""
+    logger.error(f"ValueError: {str(exc)}")
+    return JSONResponse(
+        status_code=400,
+        content=ErrorResponse(
+            code=ErrorCode.INVALID_INPUT,
+            message=str(exc)
+        ).model_dump()
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle unexpected exceptions."""
+    logger.exception(f"Unexpected error: {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content=ErrorResponse(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="An unexpected error occurred",
+            suggestion="Please try again later or contact support"
+        ).model_dump()
+    )
 
 
 # ============================================================================
@@ -91,7 +148,7 @@ async def chat(request: ChatRequest):
     """
     try:
         # Build conversation history
-        messages = []
+        messages: list[BaseMessage] = []
         if request.conversation_history:
             for msg in request.conversation_history:
                 if msg.get("role") == "user":
@@ -102,23 +159,26 @@ async def chat(request: ChatRequest):
         
         # Get user context if available
         user_profile = None
-        subscription_tier = "free"
+        subscription_tier: Literal["free", "saving", "energy", "performance"] = "free"
         inventory = []
         
         if request.user_id:
             user_profile = SupabaseClient.get_user_profile(request.user_id)
-            subscription_tier = SupabaseClient.get_user_subscription(request.user_id)
+            tier = SupabaseClient.get_user_subscription(request.user_id)
+            # Validate subscription tier
+            if tier in ("free", "saving", "energy", "performance"):
+                subscription_tier = tier
             inventory = SupabaseClient.get_user_inventory(request.user_id)
         
         # Prepare initial state
-        initial_state: AgentState = {
+        initial_state = cast(AgentState, {
             "messages": messages,
             "user_id": request.user_id,
             "user_profile": user_profile,
             "intent": None,
             "subscription_tier": subscription_tier,
             "context": {"inventory": inventory},
-        }
+        })
         
         # Invoke orchestrator
         result = orchestrator.invoke(initial_state)
@@ -131,46 +191,79 @@ async def chat(request: ChatRequest):
             intent=result.get("intent"),
         )
         
+    except MenuGreenException:
+        # Re-raise custom exceptions to be handled by exception handler
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"Error in chat endpoint: {str(e)}")
+        # Convert to generic MenuGreenException
+        raise MenuGreenException(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Failed to process chat request",
+            details={"error": str(e)}
+        )
 
 
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
     """
     Streaming chat endpoint.
-    Returns response as Server-Sent Events for real-time display.
+    Returns response as Server-Sent Events for real-time display with true LangGraph streaming.
     """
     async def generate():
         try:
-            # Build initial state (same as /chat)
-            messages = [HumanMessage(content=request.message)]
+            # Build conversation history
+            messages: list[BaseMessage] = []
+            if request.conversation_history:
+                for msg in request.conversation_history:
+                    if msg.get("role") == "user":
+                        messages.append(HumanMessage(content=msg["content"]))
             
-            initial_state: AgentState = {
+            # Add current message
+            messages.append(HumanMessage(content=request.message))
+            
+            # Get user context if available
+            user_profile = None
+            subscription_tier: Literal["free", "saving", "energy", "performance"] = "free"
+            inventory = []
+            
+            if request.user_id:
+                user_profile = SupabaseClient.get_user_profile(request.user_id)
+                tier = SupabaseClient.get_user_subscription(request.user_id)
+                if tier in ("free", "saving", "energy", "performance"):
+                    subscription_tier = tier
+                inventory = SupabaseClient.get_user_inventory(request.user_id)
+            
+            initial_state = cast(AgentState, {
                 "messages": messages,
                 "user_id": request.user_id,
-                "user_profile": None,
+                "user_profile": user_profile,
                 "intent": None,
-                "subscription_tier": "free",
-                "context": {},
-            }
+                "subscription_tier": subscription_tier,
+                "context": {"inventory": inventory},
+            })
             
-            # Stream the response
-            # Note: Full streaming requires async graph execution
-            result = orchestrator.invoke(initial_state)
-            response_text = result["messages"][-1].content
-            
-            # Simulate streaming by yielding chunks
-            words = response_text.split()
-            for i in range(0, len(words), 3):
-                chunk = " ".join(words[i:i+3])
-                yield f"data: {json.dumps({'content': chunk})}\n\n"
-                await asyncio.sleep(0.05)
+            # True LangGraph streaming with astream()
+            async for event in orchestrator.astream(initial_state):
+                # Event structure: {node_name: output_dict}
+                for node_name, node_output in event.items():
+                    if "messages" in node_output:
+                        # Extract the last message from this node
+                        new_messages = node_output["messages"]
+                        if new_messages and len(new_messages) > 0:
+                            last_msg = new_messages[-1]
+                            if hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
+                                # Yield node progress
+                                yield f"data: {json.dumps({'node': node_name, 'content': last_msg.content})}\n\n"
             
             yield f"data: {json.dumps({'done': True})}\n\n"
             
+        except MenuGreenException as e:
+            logger.error(f"MenuGreenException in stream: {e.code} - {e.message}")
+            yield f"data: {json.dumps({'error': e.message, 'code': e.code})}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            logger.exception(f"Unexpected error in stream: {str(e)}")
+            yield f"data: {json.dumps({'error': 'An unexpected error occurred'})}\n\n"
     
     return StreamingResponse(
         generate(),

@@ -2,8 +2,7 @@
 Supabase client wrapper for Menu Green.
 Provides database access and embedding functions.
 """
-from typing import Optional
-from supabase import create_client, Client
+from typing import Optional, Any
 from supabase import create_client, Client
 
 from app.core.config import get_settings
@@ -14,7 +13,6 @@ class SupabaseClient:
     Wrapper for Supabase operations.
     """
     
-    _instance: Optional[Client] = None
     _instance: Optional[Client] = None
     
     @classmethod
@@ -32,12 +30,11 @@ class SupabaseClient:
     def get_google_embeddings(cls):
         """Get or create Google Generative AI Embeddings client."""
         # We import here to avoid circular imports or if package is missing
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
+        from langchain_google_genai import GoogleGenerativeAIEmbeddings  # type: ignore
         
         settings = get_settings()
         return GoogleGenerativeAIEmbeddings(
             model=settings.embedding_model,
-            google_api_key=settings.google_api_key,
         )
 
     @classmethod
@@ -55,16 +52,16 @@ class SupabaseClient:
         return await embeddings.aembed_query(text)
     
     @classmethod
-    def get_user_profile(cls, user_id: str) -> Optional[dict]:
+    def get_user_profile(cls, user_id: str) -> Optional[dict[str, Any]]:
         """Fetch user profile from Supabase."""
         client = cls.get_client()
         
         response = client.table("user_profiles").select("*").eq("id", user_id).single().execute()
         
-        return response.data if response.data else None
+        return response.data if response.data else None  # type: ignore
     
     @classmethod
-    def get_user_inventory(cls, user_id: str) -> list[dict]:
+    def get_user_inventory(cls, user_id: str) -> list[dict[str, Any]]:
         """Fetch user's inventory items."""
         client = cls.get_client()
         
@@ -75,7 +72,7 @@ class SupabaseClient:
             .execute()
         )
         
-        return response.data or []
+        return response.data or []  # type: ignore
     
     @classmethod
     def get_user_subscription(cls, user_id: str) -> str:

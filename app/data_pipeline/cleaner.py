@@ -107,6 +107,11 @@ class RecipeCleaner:
                 HumanMessage(content=prompt),
             ])
             
+            # Type guard for response.content
+            if not isinstance(response.content, str):
+                print(f"❌ LLM returned non-string content for '{raw.title}'")
+                return None
+            
             # Clean up potential markdown code blocks ```json ... ```
             content = response.content.strip()
             if content.startswith("```json"):
@@ -252,7 +257,7 @@ async def demo():
     for c in cleaned:
         print(f"\n📝 {c.name}")
         print(f"   Tags: {c.tags}")
-        print(f"   Macros: {c.macros_estimate}")
+        print(f"   Nutrients: {c.nutrients}")
         print(f"   Vector: {c.vector_text[:80]}...")
 
 

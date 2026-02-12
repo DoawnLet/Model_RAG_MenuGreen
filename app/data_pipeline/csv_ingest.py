@@ -30,7 +30,7 @@ def parse_list_string(s: str) -> List[str]:
     except:
         return []
 
-def parse_nutrition(s: str) -> dict:
+def parse_nutrition(s: str) -> Optional[dict]:
     """
     Parse nutrition list string [cal, fat, sugar, sodium, protein, sat_fat, carbs].
     Returns macros_estimate dict.

@@ -22,8 +22,8 @@ async def verify_gemini():
         text = "Món ăn ngon Việt Nam"
         emb = await SupabaseClient.create_embedding(text)
         print(f"   ✅ Embedding generated. Dimension: {len(emb)}")
-        if len(emb) != 3072:
-            print(f"   ⚠️ WARNING: Expected 3072 dimensions for gemini-embedding-001, got {len(emb)}. Check model config.")
+        if len(emb) != 768:
+            print(f"   ⚠️ WARNING: Expected 768 dimensions for models/gemini-embedding-001, got {len(emb)}. Check model config.")
     except Exception as e:
         print(f"   ❌ Embedding failed: {e}")
         return

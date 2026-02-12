@@ -46,11 +46,17 @@ async def ingest_synthetic(count: int):
     from google.api_core.exceptions import ResourceExhausted, ServiceUnavailable
     
     # Retry decorator for generation
+    def log_retry(retry_state):
+        if retry_state.next_action and hasattr(retry_state.next_action, 'sleep'):
+            print(f"⚠️ Quota hit. Retrying in {retry_state.next_action.sleep}s...")
+        else:
+            print(f"⚠️ Quota hit. Retrying...")
+    
     @retry(
         retry=retry_if_exception_type((ResourceExhausted, ServiceUnavailable)),
         wait=wait_exponential(multiplier=2, min=4, max=60),
         stop=stop_after_attempt(10),
-        before_sleep=lambda retry_state: print(f"⚠️ Quota hit. Retrying in {retry_state.next_action.sleep}s...")
+        before_sleep=log_retry
     )
     async def generate_batch_safe(batch_size, category):
          return await generate_synthetic_recipes(batch_size, category=category)
@@ -178,7 +184,7 @@ async def ingest_from_file(json_file: str):
                 cook_time_minutes=r.get("cook_time_minutes"),
                 servings=r.get("servings"),
                 tags=r.get("tags", []),
-                macros_estimate=r.get("macros_estimate"),
+                nutrients=r.get("nutrients"),
                 vector_text=r.get("vector_text", r["name"]),
             )
             for r in recipes

@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel
 import re
+import logging
 
 from app.agents.nutrition import (
     UserProfile, 
@@ -24,6 +25,16 @@ from app.agents.rag_tool import format_recipe_results, RAGTool
 from app.core.config import get_settings
 from app.core.supabase_client import SupabaseClient
 from app.agents.web_browser import browse_url
+from app.agents.meal_planner import (
+    nutrition_analyzer_agent,
+    recipe_retriever_agent,
+    meal_planner_agent,
+    recipe_adapter_agent,
+    validation_shopping_agent,
+)
+from app.core.retry_utils import with_retry, safe_llm_call
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -55,22 +66,46 @@ class AgentState(TypedDict):
 # ============================================================================
 
 INTENT_PROMPT = """
-Bạn là một hệ thống phân loại ý định người dùng cho ứng dụng dinh dưỡng Menu Green.
+Bạn là hệ thống phân loại ý định người dùng cho ứng dụng dinh dưỡng Menu Green.
 
-Phân loại tin nhắn của người dùng vào MỘT trong các danh mục sau:
-- "recipe_search": Người dùng muốn tìm công thức nấu ăn hoặc đề xuất món ăn
-- "web_browsing": Người dùng cung cấp URL hoặc yêu cầu đọc/tóm tắt từ link
-- "nutrition_calc": Người dùng muốn tính toán dinh dưỡng (BMR, TDEE, macro)
-- "inventory_check": Người dùng muốn kiểm tra nguyên liệu hoặc hạn sử dụng
-- "meal_plan": Người dùng muốn lập kế hoạch bữa ăn
-- "general": Câu hỏi chung về sức khỏe, dinh dưỡng
-- "unknown": Không liên quan đến app
+NHIỆM VỤ: Phân loại tin nhắn vào MỘT trong các intent sau:
 
-Chỉ trả lời bằng MỘT từ duy nhất là tên danh mục.
+1. **recipe_search**: Tìm công thức, đề xuất món ăn, hỏi cách nấu
+   Ví dụ: "Món gì ngon cho bữa trưa?", "Cách làm phở bò", "Món ăn với gà"
+
+2. **web_browsing**: Cung cấp URL hoặc yêu cầu đọc/tóm tắt link
+   Ví dụ: "Đọc bài này giúp tôi: https://...", "Tóm tắt link này"
+
+3. **nutrition_calc**: Tính toán BMR/TDEE/macros, phân tích dinh dưỡng cá nhân
+   Ví dụ: "Tính BMR cho tôi", "Tôi cần bao nhiêu protein?", "TDEE của tôi là gì?"
+
+4. **inventory_check**: Kiểm tra kho nguyên liệu, hạn sử dụng
+   Ví dụ: "Nguyên liệu nào sắp hết hạn?", "Kiểm tra tủ lạnh", "Còn gì trong kho?"
+
+5. **meal_plan**: Lập kế hoạch bữa ăn 7 ngày
+   Ví dụ: "Lên thực đơn tuần", "Kế hoạch ăn giảm cân", "Meal prep cho 1 tuần"
+
+6. **general**: Câu hỏi chung về sức khỏe, dinh dưỡng, lời khuyên
+   Ví dụ: "Ăn gì để tăng cơ?", "Chế độ ăn cho người tiểu đường", "Lợi ích của rau xanh"
+
+7. **unknown**: Không liên quan đến ứng dụng
+   Ví dụ: "Thời tiết hôm nay", "Ai thắng World Cup?"
+
+OUTPUT FORMAT: Chỉ trả về TÊN INTENT (1 từ) - không giải thích.
+
+VÍ DỤ:
+User: "Món gì ngon cho bữa tối?"
+Assistant: recipe_search
+
+User: "Lên thực đơn giảm cân cho tôi"
+Assistant: meal_plan
+
+User: "Tính BMR của tôi"
+Assistant: nutrition_calc
 """
 
 
-def classify_intent(state: AgentState) -> AgentState:
+def classify_intent(state: AgentState) -> dict:
     """
     Classify user intent from the latest message.
     
@@ -80,21 +115,30 @@ def classify_intent(state: AgentState) -> AgentState:
     settings = get_settings()
     
     # Heuristic: If message contains http/https, likely web browsing
-    last_message = state["messages"][-1].content
+    last_message = state["messages"][-1]
+    # Type guard: ensure content is string
+    if not isinstance(last_message.content, str):
+        return {"intent": "general"}
+    
+    message_content: str = last_message.content
     url_pattern = r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+"
-    if re.search(url_pattern, last_message):
+    if re.search(url_pattern, message_content):
         return {"intent": "web_browsing"}
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",  # Use fast model for classification
+        model=settings.llm_model,
         google_api_key=settings.google_api_key,
         temperature=0,
     )
     
     response = llm.invoke([
         {"role": "system", "content": INTENT_PROMPT},
-        {"role": "user", "content": last_message},
+        {"role": "user", "content": message_content},
     ])
+    
+    # Type guard: ensure response content is string
+    if not isinstance(response.content, str):
+        return {"intent": "general"}
     
     intent = response.content.strip().lower()
     
@@ -140,7 +184,7 @@ def check_permissions(state: AgentState) -> bool:
 # Agent Nodes
 # ============================================================================
 
-def nutrition_agent(state: AgentState) -> AgentState:
+def nutrition_agent(state: AgentState) -> dict:
     """
     Handle nutrition calculation requests.
     Requires user profile data.
@@ -159,7 +203,7 @@ def nutrition_agent(state: AgentState) -> AgentState:
     return {"messages": [AIMessage(content=response)]}
 
 
-def inventory_agent(state: AgentState) -> AgentState:
+def inventory_agent(state: AgentState) -> dict:
     """
     Handle inventory-related queries.
     Checks expiration dates and alerts user.
@@ -178,23 +222,29 @@ def inventory_agent(state: AgentState) -> AgentState:
     return {"messages": [AIMessage(content=response)]}
 
 
-async def recipe_agent(state: AgentState) -> AgentState:
+async def recipe_agent(state: AgentState) -> dict:
     """
-    Handle recipe search requests using RAG.
+    Handle recipe search requests using RAG with retry logic.
     Available to all tiers.
     """
     try:
         # Initialize RAG Tool
-        # In a real app, inject this or use a singleton to avoid re-init
         client = SupabaseClient.get_client()
         rag = RAGTool(client, SupabaseClient.create_embedding)
         
-        last_message = state["messages"][-1].content
+        last_message = state["messages"][-1]
+        # Type guard: ensure content is string
+        if not isinstance(last_message.content, str):
+            return {"messages": [AIMessage(content="❌ Không thể xử lý tin nhắn này.")]}
         
-        # Search for recipes (using 5 results by default)
-        # We search by raw text since we don't have an entity extractor yet
-        recipes = await rag.search_by_text(last_message, limit=3)
+        message_content: str = last_message.content
         
+        # Wrap RAG search with retry decorator
+        @with_retry(max_attempts=3, base_delay=1.0)
+        async def search_with_retry():
+            return await rag.search_by_text(message_content, limit=3)
+        
+        recipes = await search_with_retry()
         response = format_recipe_results(recipes)
         
         # Add context-aware suggestion if user has inventory
@@ -203,21 +253,27 @@ async def recipe_agent(state: AgentState) -> AgentState:
             response += "\n\n💡 Gợi ý: Hãy thử tìm món ăn với nguyên liệu bạn đang có!"
             
     except Exception as e:
-        response = f"❌ Lỗi khi tìm kiếm công thức: {str(e)}"
+        logger.error(f"Recipe agent failed: {e}")
+        response = f"❌ Lỗi khi tìm kiếm công thức. Vui lòng thử lại sau."
         
     return {"messages": [AIMessage(content=response)]}
 
 
-async def web_browsing_agent(state: AgentState) -> AgentState:
+async def web_browsing_agent(state: AgentState) -> dict:
     """
     Handle web browsing requests.
     Extracts URL, crawls content, and summarizes/answers using LLM.
     """
-    last_message = state["messages"][-1].content
+    last_message = state["messages"][-1]
+    # Type guard: ensure content is string
+    if not isinstance(last_message.content, str):
+        return {"messages": [AIMessage(content="❌ Không thể xử lý tin nhắn này.")]}
+    
+    message_content: str = last_message.content
     
     # 1. Extract URL
     url_pattern = r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+[^\s]*"
-    urls = re.findall(url_pattern, last_message)
+    urls = re.findall(url_pattern, message_content)
     
     if not urls:
         return {"messages": [AIMessage(content="❌ Không tìm thấy đường dẫn (URL) hợp lệ trong tin nhắn.")]}
@@ -247,13 +303,13 @@ async def web_browsing_agent(state: AgentState) -> AgentState:
     
     response = await llm.ainvoke([
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Yêu cầu của người dùng: {last_message}\n\nNội dung trang web:\n{truncated_content}"}
+        {"role": "user", "content": f"Yêu cầu của người dùng: {message_content}\n\nNội dung trang web:\n{truncated_content}"}
     ])
     
     return {"messages": [AIMessage(content=response.content)]}
 
 
-def general_agent(state: AgentState) -> AgentState:
+def general_agent(state: AgentState) -> dict:
     """
     Handle general questions with a conversational LLM.
     """
@@ -277,11 +333,11 @@ def general_agent(state: AgentState) -> AgentState:
     return {"messages": [AIMessage(content=response.content)]}
 
 
-def permission_denied_agent(state: AgentState) -> AgentState:
+def permission_denied_agent(state: AgentState) -> dict:
     """
     Handle requests that require higher subscription tier.
     """
-    intent = state.get("intent", "unknown")
+    intent = state.get("intent") or "unknown"
     tier = state.get("subscription_tier", "free")
     
     upgrade_messages = {
@@ -310,14 +366,14 @@ def route_by_intent(state: AgentState) -> str:
     if not check_permissions(state):
         return "permission_denied"
     
-    intent = state.get("intent", "general")
+    intent = state.get("intent") or "general"
     
     routes = {
         "recipe_search": "recipe",
         "web_browsing": "web_browsing",
         "nutrition_calc": "nutrition",
         "inventory_check": "inventory",
-        "meal_plan": "general",  # TODO: Implement meal planner
+        "meal_plan": "meal_plan_workflow",  # 5-step meal planning pipeline
         "general": "general",
         "unknown": "general",
     }
@@ -326,10 +382,44 @@ def route_by_intent(state: AgentState) -> str:
 
 
 # ============================================================================
+# Meal Planning Subgraph
+# ============================================================================
+
+def create_meal_plan_subgraph():
+    """
+    Create 5-step meal planning subgraph.
+    
+    Pipeline:
+    nutrition_analyzer → recipe_retriever → meal_planner 
+    → recipe_adapter → validation_shopping → END
+    """
+    subgraph = StateGraph(AgentState)
+    
+    # Add 5 agent nodes
+    subgraph.add_node("nutrition_analyzer", nutrition_analyzer_agent)
+    subgraph.add_node("recipe_retriever", recipe_retriever_agent)
+    subgraph.add_node("meal_planner", meal_planner_agent)
+    subgraph.add_node("recipe_adapter", recipe_adapter_agent)
+    subgraph.add_node("validation_shopping", validation_shopping_agent)
+    
+    # Set entry point
+    subgraph.set_entry_point("nutrition_analyzer")
+    
+    # Sequential pipeline edges
+    subgraph.add_edge("nutrition_analyzer", "recipe_retriever")
+    subgraph.add_edge("recipe_retriever", "meal_planner")
+    subgraph.add_edge("meal_planner", "recipe_adapter")
+    subgraph.add_edge("recipe_adapter", "validation_shopping")
+    subgraph.add_edge("validation_shopping", END)
+    
+    return subgraph.compile()
+
+
+# ============================================================================
 # Graph Construction
 # ============================================================================
 
-def create_orchestrator() -> StateGraph:
+def create_orchestrator():
     """
     Build the LangGraph orchestrator.
     
@@ -351,6 +441,7 @@ def create_orchestrator() -> StateGraph:
     workflow.add_node("web_browsing", web_browsing_agent)
     workflow.add_node("general", general_agent)
     workflow.add_node("permission_denied", permission_denied_agent)
+    workflow.add_node("meal_plan_workflow", create_meal_plan_subgraph())
     
     # Set entry point
     workflow.set_entry_point("classify_intent")
@@ -364,6 +455,7 @@ def create_orchestrator() -> StateGraph:
             "inventory": "inventory",
             "recipe": "recipe",
             "web_browsing": "web_browsing",
+            "meal_plan_workflow": "meal_plan_workflow",
             "general": "general",
             "permission_denied": "permission_denied",
         }
@@ -376,6 +468,7 @@ def create_orchestrator() -> StateGraph:
     workflow.add_edge("web_browsing", END)
     workflow.add_edge("general", END)
     workflow.add_edge("permission_denied", END)
+    workflow.add_edge("meal_plan_workflow", END)
     
     return workflow.compile()
 

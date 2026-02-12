@@ -2,7 +2,7 @@
 RAG Tool - Recipe search using pgvector similarity.
 Queries Supabase to find recipes based on user-provided ingredients.
 """
-from typing import Optional
+from typing import Optional, Any, cast
 from pydantic import BaseModel
 from supabase import Client
 
@@ -75,8 +75,11 @@ class RAGTool:
             }
         ).execute()
         
-        if not response.data:
+        if not response.data or not isinstance(response.data, list):
             return []
+        
+        # Cast to list[dict] for type safety
+        results = cast(list[dict[str, Any]], response.data)
         
         return [
             RecipeMatch(
@@ -88,7 +91,7 @@ class RAGTool:
                 servings=row.get("servings"),
                 similarity_score=row.get("similarity", 0.0),
             )
-            for row in response.data
+            for row in results
         ]
     
     async def search_by_text(
@@ -117,8 +120,11 @@ class RAGTool:
             }
         ).execute()
         
-        if not response.data:
+        if not response.data or not isinstance(response.data, list):
             return []
+        
+        # Cast to list[dict] for type safety
+        results = cast(list[dict[str, Any]], response.data)
         
         return [
             RecipeMatch(
@@ -130,7 +136,7 @@ class RAGTool:
                 servings=row.get("servings"),
                 similarity_score=row.get("similarity", 0.0),
             )
-            for row in response.data
+            for row in results
         ]
 
 

@@ -61,7 +61,8 @@ class RecipeScraper:
             
             # Extract image
             image_elem = soup.select_one("img.recipe-image, [class*='recipe'] img")
-            image_url = image_elem.get("src") if image_elem else None
+            img_src = image_elem.get("src") if image_elem else None
+            image_url = str(img_src) if img_src and isinstance(img_src, str) else None
             
             return RawRecipe(
                 source_url=url,
@@ -134,7 +135,7 @@ Tạo {count} món:
 """
 
 
-async def generate_synthetic_recipes(count: int = 10, category: str = None) -> list[dict]:
+async def generate_synthetic_recipes(count: int = 10, category: Optional[str] = None) -> list[dict]:
     """
     Generate synthetic Vietnamese recipes using Google Gemini.
     
@@ -169,6 +170,11 @@ async def generate_synthetic_recipes(count: int = 10, category: str = None) -> l
     ])
     
     try:
+        # Type guard for response.content
+        if not isinstance(response.content, str):
+            print("❌ LLM returned non-string content")
+            return []
+        
         content = response.content.strip()
         if content.startswith("```json"):
             content = content[7:]
