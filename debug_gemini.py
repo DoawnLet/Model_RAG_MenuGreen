@@ -8,6 +8,9 @@ from app.core.config import get_settings
 settings = get_settings()
 API_KEY = settings.google_api_key
 
+# Set environment variable for GoogleGenerativeAIEmbeddings
+os.environ["GOOGLE_API_KEY"] = API_KEY
+
 async def test_generation():
     print("\n--- Testing Generation (gemini-1.5-flash) ---")
     try:
@@ -22,7 +25,7 @@ async def test_generation():
 async def test_embedding(model_name):
     print(f"\n--- Testing Embedding ({model_name}) ---")
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model=model_name, google_api_key=API_KEY)
+        embeddings = GoogleGenerativeAIEmbeddings(model=model_name)
         vec = await embeddings.aembed_query("Hello world")
         print(f"✅ Success! Dimension: {len(vec)}")
     except Exception as e:
