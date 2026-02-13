@@ -16,7 +16,7 @@ import json
 import asyncio
 import logging
 
-from app.agents.orchestrator import AgentState
+from app.agents.state import AgentState
 from app.models.meal_plan import (
     NutritionTargets,
     MealDistribution,
@@ -27,7 +27,11 @@ from app.models.meal_plan import (
     DailyMealPlan,
     ShoppingListItem,
     UserInfo,
+    UserInfo,
     MealPlanOutput,
+    SearchQueries,
+    WeeklyMealPlanAllocation, 
+    DailyAllocation,
 )
 from app.agents.nutrition import calculate_bmr, calculate_tdee, calculate_target_calories, UserProfile
 from app.agents.rag_tool import RAGTool
@@ -127,31 +131,21 @@ async def nutrition_analyzer_agent(state: AgentState) -> dict:
             fat_g=fat_g,
         )
 
-        response = await llm.ainvoke([{"role": "user", "content": prompt}])
+        # Structured Output
+        structured_llm = llm.with_structured_output(MealDistribution)
+        distribution_data: MealDistribution = await structured_llm.ainvoke(prompt)
         
-        # Type guard for response.content
-        if not isinstance(response.content, str):
-            return {
-                "validation_errors": ["LLM response không phải text"],
-                "messages": [AIMessage(content="❌ Lỗi: Response từ LLM không hợp lệ")]
-            }
-        
-        content = response.content.strip()
-
-        # Clean markdown code blocks if present
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-
-        distribution_data = json.loads(content)
+        # Convert to dict for storage if needed, or keep as model.
+        # But downstream expects dict access like ['breakfast_percent'].
+        # Let's convert to dict to be safe with existing code structure or update downstream.
+        # The nutrition_targets dict below expects 'meal_distribution' to be the data.
 
         nutrition_targets = {
             "daily_calories": target_cals,
             "protein_g": protein_g,
             "carbs_g": carbs_g,
             "fat_g": fat_g,
-            "meal_distribution": distribution_data
+            "meal_distribution": distribution_data.model_dump()
         }
 
         logger.info(f"✅ Nutrition analysis complete: {target_cals} kcal/day")
@@ -247,24 +241,10 @@ async def recipe_retriever_agent(state: AgentState) -> dict:
             activity_level=activity
         )
 
-        response = await llm.ainvoke([{"role": "user", "content": prompt}])
-        
-        # Type guard for response.content
-        if not isinstance(response.content, str):
-            return {
-                "validation_errors": ["LLM response không phải text"],
-                "messages": [AIMessage(content="❌ Lỗi: Response từ LLM không hợp lệ")]
-            }
-        
-        content = response.content.strip()
-
-        # Clean markdown
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-
-        queries = json.loads(content)
+        # Structured Output
+        structured_llm = llm.with_structured_output(SearchQueries)
+        result: SearchQueries = await structured_llm.ainvoke(prompt)
+        queries = result.queries
 
         # RAG Search for each query
         client = SupabaseClient.get_client()
@@ -346,12 +326,13 @@ Bạn là Meal Planner AI. Phân bổ recipes cho 7 ngày thực đơn.
 **Available recipes ({num_recipes} món):**
 {recipe_list}
 
-**Output JSON (chỉ recipe IDs):**
+**Output JSON:**
 {{
-  "day_1": {{"breakfast": "uuid1", "lunch": "uuid2", "dinner": "uuid3", "snack": "uuid4"}},
-  "day_2": {{...}},
-  ...
-  "day_7": {{...}}
+  "allocations": [
+    {{"breakfast": "uuid", "lunch": "uuid", "dinner": "uuid", "snack": "uuid"}}, // Day 1
+    ...
+    {{"breakfast": "uuid", "lunch": "uuid", "dinner": "uuid", "snack": "uuid"}}  // Day 7
+  ]
 }}
 """
 
@@ -426,24 +407,15 @@ async def meal_planner_agent(state: AgentState) -> dict:
             recipe_list=json.dumps(recipe_summary, ensure_ascii=False, indent=2)
         )
 
-        response = await llm.ainvoke([{"role": "user", "content": prompt}])
+        # Structured Output
+        structured_llm = llm.with_structured_output(WeeklyMealPlanAllocation)
+        result: WeeklyMealPlanAllocation = await structured_llm.ainvoke(prompt)
         
-        # Type guard for response.content
-        if not isinstance(response.content, str):
-            return {
-                "validation_errors": ["LLM response không phải text"],
-                "messages": [AIMessage(content="❌ Lỗi: Response từ LLM không hợp lệ")]
-            }
+        # Convert to dictionary format expected by downstream agent (day_1, day_2 keys)
         
-        content = response.content.strip()
-
-        # Clean markdown
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0].strip()
-
-        allocation = json.loads(content)
+        allocation = {}
+        for idx, day_alloc in enumerate(result.allocations, 1):
+             allocation[f"day_{idx}"] = day_alloc.model_dump()
 
         logger.info("✅ Meal allocation complete for 7 days")
 
@@ -592,8 +564,10 @@ async def recipe_adapter_agent(state: AgentState) -> dict:
                     inventory_items=", ".join(list(inventory_names)[:10]) if inventory_names else "Không có"
                 )
 
+                # Structured Output
+                structured_llm = llm.with_structured_output(AdaptedRecipe)
                 # Create async task
-                adaptation_tasks.append(llm.ainvoke([{"role": "user", "content": prompt}]))
+                adaptation_tasks.append(structured_llm.ainvoke(prompt))
                 task_metadata.append((day_num, meal_type))
 
         # Execute all adaptations in parallel
@@ -608,26 +582,13 @@ async def recipe_adapter_agent(state: AgentState) -> dict:
                 logger.error(f"Adaptation failed for day {day_num} {meal_type}: {response}")
                 continue
             
-            # Type guard: response should be BaseMessage
-            if not isinstance(response, BaseMessage):
-                logger.error(f"Invalid response type for day {day_num} {meal_type}")
-                continue
-            
+            # Response is now AdaptedRecipe object (or should be)
+            if not isinstance(response, AdaptedRecipe):
+                 logger.error(f"Invalid response type for day {day_num} {meal_type}: {type(response)}")
+                 continue
+
             try:
-                # Type guard for response.content
-                if not isinstance(response.content, str):
-                    logger.error(f"LLM response không phải text cho day {day_num} {meal_type}")
-                    continue
-                
-                content = response.content.strip()
-
-                # Clean markdown
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0].strip()
-
-                adapted_json = json.loads(content)
+                adapted_json = response.model_dump()
 
                 # Mark in_inventory
                 for ing in adapted_json.get("nguyen_lieu", []):

@@ -2,6 +2,8 @@
 LangGraph Orchestrator - The central brain of Menu Green.
 Implements a Hub-and-Spoke model for routing user requests to specialized agents.
 """
+
+
 from typing import Annotated, Literal, Optional, TypedDict
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
@@ -34,6 +36,7 @@ from app.agents.meal_planner import (
 )
 from app.core.retry_utils import with_retry, safe_llm_call
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,24 +44,8 @@ logger = logging.getLogger(__name__)
 # State Definition
 # ============================================================================
 
-class AgentState(TypedDict):
-    """
-    State shared across all nodes in the graph.
-    
-    Attributes:
-        messages: Conversation history (accumulates via add_messages)
-        user_id: Current user's ID
-        user_profile: User's nutrition profile (optional)
-        intent: Detected user intent
-        subscription_tier: User's subscription level
-        context: Additional context data
-    """
-    messages: Annotated[list[BaseMessage], add_messages]
-    user_id: Optional[str]
-    user_profile: Optional[dict]
-    intent: Optional[str]
-    subscription_tier: Literal["free", "saving", "energy", "performance"]
-    context: dict
+from app.agents.state import AgentState
+
 
 
 # ============================================================================
@@ -112,8 +99,25 @@ def classify_intent(state: AgentState) -> dict:
     This node analyzes the user's message and determines which 
     specialized agent should handle it.
     """
+    from app.core.memory import get_memory_manager
     settings = get_settings()
     
+    # --- MEMORY INJECTION ---
+    user_id = state.get("user_id") or "default_user"
+    memory_manager = get_memory_manager()
+    # Fetch relevant memories (e.g. top 5) based on the last message
+    last_msg_content = state["messages"][-1].content
+    if isinstance(last_msg_content, str):
+        memories = memory_manager.get_formatted_context(user_id, last_msg_content)
+    else:
+        memories = ""
+    
+    # Update state with memory
+    # Note: In a real LangGraph, we might want to do this in a separate node, 
+    # but doing it here saves a step.
+    state["memory"] = memories
+    # ------------------------
+
     # Heuristic: If message contains http/https, likely web browsing
     last_message = state["messages"][-1]
     # Type guard: ensure content is string
@@ -228,6 +232,9 @@ async def recipe_agent(state: AgentState) -> dict:
     Available to all tiers.
     """
     try:
+        # Inject Memory
+        user_memory = state.get("memory", "")
+        
         # Initialize RAG Tool
         client = SupabaseClient.get_client()
         rag = RAGTool(client, SupabaseClient.create_embedding)
@@ -252,6 +259,9 @@ async def recipe_agent(state: AgentState) -> dict:
         if inventory and not recipes:
             response += "\n\n💡 Gợi ý: Hãy thử tìm món ăn với nguyên liệu bạn đang có!"
             
+        if user_memory:
+             response += f"\n\n(Lưu ý từ ký ức: {user_memory})"
+
     except Exception as e:
         logger.error(f"Recipe agent failed: {e}")
         response = f"❌ Lỗi khi tìm kiếm công thức. Vui lòng thử lại sau."
@@ -322,6 +332,9 @@ def general_agent(state: AgentState) -> dict:
     system_message = """
     Bạn là trợ lý dinh dưỡng Menu Green. Trả lời ngắn gọn, thân thiện về 
     các câu hỏi liên quan đến sức khỏe và dinh dưỡng.
+    
+    THÔNG TIN CÁ NHÂN (Ký ức):
+    {state.get("memory", "")}
     """
     
     response = llm.invoke([
@@ -354,6 +367,43 @@ def permission_denied_agent(state: AgentState) -> dict:
     
     return {"messages": [AIMessage(content=response)]}
 
+
+# ============================================================================
+# Memory Node
+# ============================================================================
+
+
+
+def save_memory_node(state: AgentState) -> dict:
+    """
+    Node to save the interaction to memory.
+    """
+    from app.core.memory import get_memory_manager
+    
+    user_id = state.get("user_id") or "default_user"
+    last_user_msg = None
+    last_ai_msg = None
+    
+    # Find last user and AI message
+    for m in reversed(state["messages"]):
+        if isinstance(m, HumanMessage) and not last_user_msg:
+            last_user_msg = m.content
+        if isinstance(m, AIMessage) and not last_ai_msg:
+            last_ai_msg = m.content
+        if last_user_msg and last_ai_msg:
+            break
+            
+    if last_user_msg and last_ai_msg:
+        try:
+            memory_manager = get_memory_manager()
+            # Combine Q&A for better context
+            interaction = f"User: {last_user_msg}\nAI: {last_ai_msg}"
+            memory_manager.add_memory(user_id, interaction)
+            logger.info(f"💾 Memory saved for user {user_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to save memory: {e}")
+            
+    return {} # Does not modify state keys
 
 # ============================================================================
 # Router Logic
@@ -419,7 +469,7 @@ def create_meal_plan_subgraph():
 # Graph Construction
 # ============================================================================
 
-def create_orchestrator():
+def create_orchestrator(checkpointer=None):
     """
     Build the LangGraph orchestrator.
     
@@ -442,6 +492,7 @@ def create_orchestrator():
     workflow.add_node("general", general_agent)
     workflow.add_node("permission_denied", permission_denied_agent)
     workflow.add_node("meal_plan_workflow", create_meal_plan_subgraph())
+    workflow.add_node("save_memory", save_memory_node)
     
     # Set entry point
     workflow.set_entry_point("classify_intent")
@@ -462,16 +513,29 @@ def create_orchestrator():
     )
     
     # All agents end the conversation turn
-    workflow.add_edge("nutrition", END)
-    workflow.add_edge("inventory", END)
-    workflow.add_edge("recipe", END)
-    workflow.add_edge("web_browsing", END)
-    workflow.add_edge("general", END)
-    workflow.add_edge("permission_denied", END)
-    workflow.add_edge("meal_plan_workflow", END)
+    # All agents go to save_memory instead of END
+    workflow.add_edge("nutrition", "save_memory")
+    workflow.add_edge("inventory", "save_memory")
+    workflow.add_edge("recipe", "save_memory")
+    workflow.add_edge("web_browsing", "save_memory")
+    workflow.add_edge("general", "save_memory")
+    workflow.add_edge("meal_plan_workflow", "save_memory")
     
-    return workflow.compile()
+    # Permission denied usually doesn't need memory saving, but can link if needed
+    workflow.add_edge("permission_denied", END)
+    
+    # Save memory ends the flow
+    workflow.add_edge("save_memory", END)
+    
+    return workflow.compile(checkpointer=checkpointer)
 
 
-# Singleton instance
+# Export the graph builder for external compilation if needed,
+# or use a factory function in main.py
+def get_compiled_graph(checkpointer=None):
+    """Factory to get the compiled graph, optionally with persistence."""
+    workflow = create_orchestrator(checkpointer)
+    return workflow
+
+# Create default instance
 orchestrator = create_orchestrator()

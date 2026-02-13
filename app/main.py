@@ -13,7 +13,12 @@ import json
 import asyncio
 import logging
 
-from app.agents.orchestrator import orchestrator, AgentState
+from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg import Connection
+from psycopg.rows import dict_row, DictRow
+from psycopg_pool import ConnectionPool
+
+from app.agents.orchestrator import get_compiled_graph, AgentState
 from app.core.config import get_settings
 from app.core.supabase_client import SupabaseClient
 from app.core.errors import (
@@ -39,9 +44,32 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     print(f"🌿 {settings.app_name} starting...")
     print(f"📡 Supabase URL: {settings.supabase_url[:30]}..." if settings.supabase_url else "⚠️ Supabase not configured")
+
+    # Initialize Postgres Persistence
+    if settings.postgres_url:
+        print("💾 Initializing LangGraph Persistence...")
+        # Use sync ConnectionPool with PostgresSaver (properly typed)
+        pool: ConnectionPool[Connection[DictRow]] = ConnectionPool(
+            conninfo=settings.postgres_url, 
+            kwargs={"row_factory": dict_row},
+            open=False
+        )
+        pool.open()
+        checkpointer = PostgresSaver(pool)
+        checkpointer.setup() # Create tables if not exist
+        app.state.orchestrator = get_compiled_graph(checkpointer)
+        app.state.db_pool = pool
+    else:
+        print("⚠️ No Postgres URL found. Persistence disabled.")
+        app.state.orchestrator = get_compiled_graph(checkpointer=None)
+        app.state.db_pool = None
+
     yield
+    
     # Shutdown
     print("🌿 Menu Green shutting down...")
+    if app.state.db_pool:
+        app.state.db_pool.close()
 
 
 app = FastAPI(
@@ -115,6 +143,7 @@ class ChatRequest(BaseModel):
     """Request body for chat endpoint."""
     message: str
     user_id: Optional[str] = None
+    thread_id: Optional[str] = None
     conversation_history: Optional[list[dict]] = None
 
 
@@ -171,17 +200,21 @@ async def chat(request: ChatRequest):
             inventory = SupabaseClient.get_user_inventory(request.user_id)
         
         # Prepare initial state
-        initial_state = cast(AgentState, {
+        initial_state = {
             "messages": messages,
             "user_id": request.user_id,
             "user_profile": user_profile,
             "intent": None,
             "subscription_tier": subscription_tier,
             "context": {"inventory": inventory},
-        })
+        }
+
+        # Config for persistence
+        thread_id = request.thread_id or request.user_id or "default_thread"
+        config = {"configurable": {"thread_id": thread_id}}
         
-        # Invoke orchestrator
-        result = orchestrator.invoke(initial_state)
+        # Invoke orchestrator from app.state
+        result = await app.state.orchestrator.ainvoke(initial_state, config=config)
         
         # Extract response
         ai_message = result["messages"][-1]
@@ -234,17 +267,21 @@ async def chat_stream(request: ChatRequest):
                     subscription_tier = tier
                 inventory = SupabaseClient.get_user_inventory(request.user_id)
             
-            initial_state = cast(AgentState, {
+            initial_state = {
                 "messages": messages,
                 "user_id": request.user_id,
                 "user_profile": user_profile,
                 "intent": None,
                 "subscription_tier": subscription_tier,
                 "context": {"inventory": inventory},
-            })
+            }
             
+            # Config for persistence
+            thread_id = request.thread_id or request.user_id or "default_thread"
+            config = {"configurable": {"thread_id": thread_id}}
+
             # True LangGraph streaming with astream()
-            async for event in orchestrator.astream(initial_state):
+            async for event in app.state.orchestrator.astream(initial_state, config=config):
                 # Event structure: {node_name: output_dict}
                 for node_name, node_output in event.items():
                     if "messages" in node_output:

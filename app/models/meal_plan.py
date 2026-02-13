@@ -103,9 +103,25 @@ class DailyMealPlan(BaseModel):
     buoi_an: list[Meal] = Field(description="Các bữa ăn trong ngày (4 bữa)")
 
 
-# ============================================================================
-# Shopping List Models
-# ============================================================================
+    buoi_an: list[Meal] = Field(description="Các bữa ăn trong ngày (4 bữa)")
+
+
+class SearchQueries(BaseModel):
+    """Danh sách các truy vấn tìm kiếm."""
+    queries: list[str] = Field(description="Danh sách 4 query tìm kiếm món ăn")
+
+
+class DailyAllocation(BaseModel):
+    """Phân bổ món ăn cho 1 ngày (chỉ chứa ID)."""
+    breakfast: str = Field(description="Recipe ID cho bữa sáng")
+    lunch: str = Field(description="Recipe ID cho bữa trưa")
+    dinner: str = Field(description="Recipe ID cho bữa tối")
+    snack: str = Field(description="Recipe ID cho bữa phụ")
+
+
+class WeeklyMealPlanAllocation(BaseModel):
+    """Phân bổ thực đơn cho 7 ngày."""
+    allocations: list[DailyAllocation] = Field(description="Danh sách phân bổ cho 7 ngày", min_length=7, max_length=7)
 
 class ShoppingListItem(BaseModel):
     """Một item trong danh sách mua sắm."""
