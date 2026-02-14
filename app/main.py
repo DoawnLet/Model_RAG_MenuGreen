@@ -6,12 +6,13 @@ from contextlib import asynccontextmanager
 from typing import Optional, Literal, cast
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, BaseMessage
 import json
 import asyncio
 import logging
+import time
 
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg import Connection
@@ -27,6 +28,13 @@ from app.core.errors import (
     ErrorCode,
     GeminiAPIException,
     SupabaseException,
+)
+from app.core.metrics import (
+    http_requests_total,
+    http_request_duration_seconds,
+    record_error,
+    get_metrics,
+    system_health,
 )
 
 # Setup logging
@@ -90,6 +98,30 @@ app.add_middleware(
 
 
 # ============================================================================
+# Monitoring Middleware (P2 Observability)
+# ============================================================================
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """Track HTTP request metrics."""
+    start_time = time.time()
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Record metrics
+    duration = time.time() - start_time
+    method = request.method
+    endpoint = request.url.path
+    status = response.status_code
+    
+    http_requests_total.labels(method=method, endpoint=endpoint, status=status).inc()
+    http_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(duration)
+    
+    return response
+
+
+# ============================================================================
 # Exception Handlers
 # ============================================================================
 
@@ -97,6 +129,10 @@ app.add_middleware(
 async def menu_green_exception_handler(request: Request, exc: MenuGreenException):
     """Handle custom Menu Green exceptions."""
     logger.error(f"MenuGreenException: {exc.code} - {exc.message}")
+    
+    # P2 Observability: Track error
+    record_error(error_type='MenuGreenException', endpoint=request.url.path)
+    
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(
@@ -112,6 +148,10 @@ async def menu_green_exception_handler(request: Request, exc: MenuGreenException
 async def value_error_handler(request: Request, exc: ValueError):
     """Handle ValueError exceptions."""
     logger.error(f"ValueError: {str(exc)}")
+    
+    # P2 Observability: Track error
+    record_error(error_type='ValueError', endpoint=request.url.path)
+    
     return JSONResponse(
         status_code=400,
         content=ErrorResponse(
@@ -169,6 +209,46 @@ async def health_check():
     return HealthResponse(status="healthy", version="0.1.0")
 
 
+@app.get("/health/db")
+async def health_check_db():
+    """Database health check endpoint."""
+    try:
+        # Check Supabase connection (primary database)
+        result = SupabaseClient.get_client().table("recipes").select("id").limit(1).execute()
+        
+        # Check optional PostgreSQL pool (for LangGraph persistence)
+        postgres_status = "active" if app.state.db_pool else "disabled"
+        
+        system_health.set(1)  # P2 Observability
+        return {
+            "status": "healthy",
+            "supabase": "connected",
+            "postgres_pool": postgres_status,
+            "note": "Postgres pool is optional for persistence only"
+        }
+    except Exception as e:
+        logger.error(f"Database health check failed: {str(e)}")
+        system_health.set(0)  # P2 Observability
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "database": "disconnected",
+                "error": str(e)
+            }
+        )
+
+
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint.
+    
+    P2 Observability: Expose all system metrics for scraping.
+    """
+    metrics_data, content_type = get_metrics()
+    return Response(content=metrics_data, media_type=content_type)
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
@@ -192,12 +272,15 @@ async def chat(request: ChatRequest):
         inventory = []
         
         if request.user_id:
-            user_profile = SupabaseClient.get_user_profile(request.user_id)
-            tier = SupabaseClient.get_user_subscription(request.user_id)
+            # Parallelize Supabase calls for performance (P0 optimization)
+            user_profile, tier, inventory = await asyncio.gather(
+                SupabaseClient.get_user_profile_async(request.user_id),
+                SupabaseClient.get_user_subscription_async(request.user_id),
+                SupabaseClient.get_user_inventory_async(request.user_id)
+            )
             # Validate subscription tier
             if tier in ("free", "saving", "energy", "performance"):
                 subscription_tier = tier
-            inventory = SupabaseClient.get_user_inventory(request.user_id)
         
         # Prepare initial state
         initial_state = {
@@ -213,8 +296,19 @@ async def chat(request: ChatRequest):
         thread_id = request.thread_id or request.user_id or "default_thread"
         config = {"configurable": {"thread_id": thread_id}}
         
-        # Invoke orchestrator from app.state
-        result = await app.state.orchestrator.ainvoke(initial_state, config=config)
+        # Invoke orchestrator with timeout (P0 reliability)
+        try:
+            result = await asyncio.wait_for(
+                app.state.orchestrator.ainvoke(initial_state, config=config),
+                timeout=120.0  # 2 minutes timeout for complex meal planning
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Orchestrator timeout after 120s for user {request.user_id}")
+            raise MenuGreenException(
+                code=ErrorCode.INTERNAL_ERROR,
+                message="Request timed out. Please try again or simplify your request.",
+                details={"timeout": "120s"}
+            )
         
         # Extract response
         ai_message = result["messages"][-1]
@@ -261,11 +355,14 @@ async def chat_stream(request: ChatRequest):
             inventory = []
             
             if request.user_id:
-                user_profile = SupabaseClient.get_user_profile(request.user_id)
-                tier = SupabaseClient.get_user_subscription(request.user_id)
+                # Parallelize Supabase calls for performance (P0 optimization)
+                user_profile, tier, inventory = await asyncio.gather(
+                    SupabaseClient.get_user_profile_async(request.user_id),
+                    SupabaseClient.get_user_subscription_async(request.user_id),
+                    SupabaseClient.get_user_inventory_async(request.user_id)
+                )
                 if tier in ("free", "saving", "energy", "performance"):
                     subscription_tier = tier
-                inventory = SupabaseClient.get_user_inventory(request.user_id)
             
             initial_state = {
                 "messages": messages,
@@ -280,8 +377,17 @@ async def chat_stream(request: ChatRequest):
             thread_id = request.thread_id or request.user_id or "default_thread"
             config = {"configurable": {"thread_id": thread_id}}
 
-            # True LangGraph streaming with astream()
+            # True LangGraph streaming with astream() and timeout tracking (P0 reliability)
+            timeout_seconds = 120.0
+            start_time = asyncio.get_event_loop().time()
+            
             async for event in app.state.orchestrator.astream(initial_state, config=config):
+                # Check timeout during streaming
+                if asyncio.get_event_loop().time() - start_time > timeout_seconds:
+                    logger.error(f"Orchestrator stream timeout after {timeout_seconds}s for user {request.user_id}")
+                    yield f"data: {json.dumps({'error': f'Request timed out after {timeout_seconds}s', 'code': 'TIMEOUT'})}\n\n"
+                    return
+                
                 # Event structure: {node_name: output_dict}
                 for node_name, node_output in event.items():
                     if "messages" in node_output:

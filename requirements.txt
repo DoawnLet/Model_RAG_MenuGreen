@@ -21,5 +21,6 @@ pandas>=2.1.0
 langgraph-checkpoint-postgres
 psycopg[binary]
 psycopg-pool
+prometheus_client>=0.20.0
 pytest
 pytest-asyncio

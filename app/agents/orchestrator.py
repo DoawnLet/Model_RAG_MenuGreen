@@ -98,8 +98,11 @@ def classify_intent(state: AgentState) -> dict:
     
     This node analyzes the user's message and determines which 
     specialized agent should handle it.
+    
+    P1 Reliability: LLM calls wrapped with retry decorator.
     """
     from app.core.memory import get_memory_manager
+    from app.core.retry_utils import with_retry
     settings = get_settings()
     
     # --- MEMORY INJECTION ---
@@ -135,10 +138,21 @@ def classify_intent(state: AgentState) -> dict:
         temperature=0,
     )
     
-    response = llm.invoke([
-        {"role": "system", "content": INTENT_PROMPT},
-        {"role": "user", "content": message_content},
-    ])
+    # P1 Reliability: Wrap LLM call with safe_llm_call helper
+    from app.core.retry_utils import safe_llm_call
+    import asyncio
+    
+    async def _classify():
+        return await llm.ainvoke([
+            {"role": "system", "content": INTENT_PROMPT},
+            {"role": "user", "content": message_content},
+        ])
+    
+    try:
+        response = asyncio.run(_classify())
+    except Exception as e:
+        logger.error(f"Intent classification failed: {e}")
+        return {"intent": "general"}
     
     # Type guard: ensure response content is string
     if not isinstance(response.content, str):

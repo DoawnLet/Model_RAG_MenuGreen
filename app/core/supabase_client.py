@@ -2,10 +2,13 @@
 Supabase client wrapper for Menu Green.
 Provides database access and embedding functions.
 """
+import logging
 from typing import Optional, Any
 from supabase import create_client, Client
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class SupabaseClient:
@@ -53,26 +56,46 @@ class SupabaseClient:
     
     @classmethod
     def get_user_profile(cls, user_id: str) -> Optional[dict[str, Any]]:
-        """Fetch user profile from Supabase."""
-        client = cls.get_client()
+        """Fetch user profile from Supabase.
         
-        response = client.table("user_profiles").select("*").eq("id", user_id).single().execute()
-        
-        return response.data if response.data else None  # type: ignore
+        Returns None if user_id is invalid or profile not found.
+        """
+        try:
+            # Validate UUID format
+            import uuid
+            uuid.UUID(user_id)
+            
+            client = cls.get_client()
+            response = client.table("user_profiles").select("*").eq("id", user_id).single().execute()
+            return response.data if response.data else None  # type: ignore
+        except (ValueError, Exception) as e:
+            # Invalid UUID or query error - return None for graceful degradation
+            logger.warning(f"Failed to fetch user profile for {user_id}: {e}")
+            return None
     
     @classmethod
     def get_user_inventory(cls, user_id: str) -> list[dict[str, Any]]:
-        """Fetch user's inventory items."""
-        client = cls.get_client()
+        """Fetch user's inventory items.
         
-        response = (
-            client.table("user_inventory")
-            .select("*, ingredients(name)")
-            .eq("user_id", user_id)
-            .execute()
-        )
-        
-        return response.data or []  # type: ignore
+        Returns empty list if user_id is invalid or no inventory found.
+        """
+        try:
+            # Validate UUID format
+            import uuid
+            uuid.UUID(user_id)
+            
+            client = cls.get_client()
+            response = (
+                client.table("user_inventory")
+                .select("*, ingredients(name)")
+                .eq("user_id", user_id)
+                .execute()
+            )
+            return response.data or []  # type: ignore
+        except (ValueError, Exception) as e:
+            # Invalid UUID or query error - return empty list
+            logger.warning(f"Failed to fetch inventory for {user_id}: {e}")
+            return []
     
     @classmethod
     def get_user_subscription(cls, user_id: str) -> str:
@@ -83,6 +106,28 @@ class SupabaseClient:
         # TODO: Implement actual subscription check
         # For now, return "free" as default
         return "free"
+    
+    # ========================================================================
+    # Async versions for parallel execution (P0 Performance Optimization)
+    # ========================================================================
+    
+    @classmethod
+    async def get_user_profile_async(cls, user_id: str) -> Optional[dict[str, Any]]:
+        """Async version: Fetch user profile from Supabase."""
+        import asyncio
+        return await asyncio.to_thread(cls.get_user_profile, user_id)
+    
+    @classmethod
+    async def get_user_inventory_async(cls, user_id: str) -> list[dict[str, Any]]:
+        """Async version: Fetch user's inventory items."""
+        import asyncio
+        return await asyncio.to_thread(cls.get_user_inventory, user_id)
+    
+    @classmethod
+    async def get_user_subscription_async(cls, user_id: str) -> str:
+        """Async version: Get user's subscription tier."""
+        import asyncio
+        return await asyncio.to_thread(cls.get_user_subscription, user_id)
 
 
 # Convenience functions

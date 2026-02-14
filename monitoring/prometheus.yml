@@ -1,0 +1,56 @@
+# Prometheus configuration for Menu Green monitoring
+
+global:
+  scrape_interval: 15s # Scrape targets every 15 seconds
+  evaluation_interval: 15s # Evaluate rules every 15 seconds
+  external_labels:
+    monitor: "menu-green"
+    environment: "production"
+
+# Alertmanager configuration (optional)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Load rules once and periodically evaluate them
+# rule_files:
+#   - "alerts.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Monitor Menu Green FastAPI application
+  - job_name: "menu_green"
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["host.docker.internal:8000"] # For Docker on Windows/Mac
+        labels:
+          service: "menu_green_api"
+          tier: "backend"
+    # Alternative for Linux or local setup:
+    # static_configs:
+    #   - targets: ['localhost:8000']
+
+  # Monitor Prometheus itself
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: "prometheus"
+
+  # Monitor Node Exporter (optional - for system metrics)
+  # - job_name: 'node'
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']
+
+# Remote write configuration for long-term storage (optional)
+# remote_write:
+#   - url: "http://your-remote-storage:9201/write"
+#     queue_config:
+#       capacity: 10000
+#       max_shards: 200
+#       min_shards: 1
+#       max_samples_per_send: 5000

@@ -78,6 +78,9 @@ Bạn là chuyên gia dinh dưỡng của Menu Green. Nhiệm vụ: Xác định
 async def nutrition_analyzer_agent(state: AgentState) -> dict:
     """
     STEP 1: Phân tích profile và tính BMR/TDEE/Macros + meal distribution.
+    
+    P1 Reliability: LLM calls with retry decorator.
+    P2 Observability: Tracks execution time and LLM calls.
 
     Args:
         state: AgentState với user_profile
@@ -85,6 +88,8 @@ async def nutrition_analyzer_agent(state: AgentState) -> dict:
     Returns:
         Updated state với nutrition_targets populated
     """
+    from app.core.retry_utils import with_retry
+    from app.core.metrics import track_llm_call
     try:
         profile_data = state.get("user_profile")
 
@@ -131,9 +136,17 @@ async def nutrition_analyzer_agent(state: AgentState) -> dict:
             fat_g=fat_g,
         )
 
-        # Structured Output
+        # Structured Output with retry (P1 Reliability)
         structured_llm = llm.with_structured_output(MealDistribution)
-        distribution_data: MealDistribution = await structured_llm.ainvoke(prompt)
+        
+        @with_retry(max_attempts=3, base_delay=1.0)
+        @track_llm_call(model=settings.llm_model, agent="nutrition_analyzer")  # P2 Observability
+        async def _get_distribution() -> MealDistribution:
+            result = await structured_llm.ainvoke(prompt)
+            # Cast to correct type (with_structured_output returns dict | BaseModel)
+            return result  # type: ignore[return-value]
+        
+        distribution_data: MealDistribution = await _get_distribution()
         
         # Convert to dict for storage if needed, or keep as model.
         # But downstream expects dict access like ['breakfast_percent'].
@@ -156,10 +169,10 @@ async def nutrition_analyzer_agent(state: AgentState) -> dict:
                 content=f"✅Step 1/5: Đã phân tích dinh dưỡng\n"
                         f"- Calo/ngày: {target_cals:.0f} kcal\n"
                         f"- Protein: {protein_g:.0f}g | Carbs: {carbs_g:.0f}g | Fat: {fat_g:.0f}g\n"
-                        f"- Phân bổ: Sáng {distribution_data['breakfast_percent']*100:.0f}%, "
-                        f"Trưa {distribution_data['lunch_percent']*100:.0f}%, "
-                        f"Tối {distribution_data['dinner_percent']*100:.0f}%, "
-                        f"Phụ {distribution_data['snack_percent']*100:.0f}%"
+                        f"- Phân bổ: Sáng {distribution_data.breakfast_percent*100:.0f}%, "
+                        f"Trưa {distribution_data.lunch_percent*100:.0f}%, "
+                        f"Tối {distribution_data.dinner_percent*100:.0f}%, "
+                        f"Phụ {distribution_data.snack_percent*100:.0f}%"
             )]
         }
 
@@ -243,8 +256,10 @@ async def recipe_retriever_agent(state: AgentState) -> dict:
 
         # Structured Output
         structured_llm = llm.with_structured_output(SearchQueries)
-        result: SearchQueries = await structured_llm.ainvoke(prompt)
-        queries = result.queries
+        result = await structured_llm.ainvoke(prompt)
+        # Cast to correct type (with_structured_output returns dict | BaseModel)
+        search_result: SearchQueries = result  # type: ignore[assignment]
+        queries = search_result.queries
 
         # RAG Search for each query
         client = SupabaseClient.get_client()
@@ -409,12 +424,13 @@ async def meal_planner_agent(state: AgentState) -> dict:
 
         # Structured Output
         structured_llm = llm.with_structured_output(WeeklyMealPlanAllocation)
-        result: WeeklyMealPlanAllocation = await structured_llm.ainvoke(prompt)
+        result = await structured_llm.ainvoke(prompt)
+        # Cast to correct type (with_structured_output returns dict | BaseModel)
+        plan_result: WeeklyMealPlanAllocation = result  # type: ignore[assignment]
         
         # Convert to dictionary format expected by downstream agent (day_1, day_2 keys)
-        
         allocation = {}
-        for idx, day_alloc in enumerate(result.allocations, 1):
+        for idx, day_alloc in enumerate(plan_result.allocations, 1):
              allocation[f"day_{idx}"] = day_alloc.model_dump()
 
         logger.info("✅ Meal allocation complete for 7 days")
@@ -564,14 +580,21 @@ async def recipe_adapter_agent(state: AgentState) -> dict:
                     inventory_items=", ".join(list(inventory_names)[:10]) if inventory_names else "Không có"
                 )
 
-                # Structured Output
+                # Structured Output with retry (P1 Reliability + P1 Performance)
                 structured_llm = llm.with_structured_output(AdaptedRecipe)
+                
+                # Wrap with retry decorator for reliability
+                from app.core.retry_utils import with_retry
+                @with_retry(max_attempts=2, base_delay=1.0)
+                async def _adapt_recipe():
+                    return await structured_llm.ainvoke(prompt)
+                
                 # Create async task
-                adaptation_tasks.append(structured_llm.ainvoke(prompt))
+                adaptation_tasks.append(_adapt_recipe())
                 task_metadata.append((day_num, meal_type))
 
-        # Execute all adaptations in parallel
-        logger.info(f"Adapting {len(adaptation_tasks)} recipes in parallel...")
+        # Execute all adaptations in parallel (P1 Performance - Already optimized!)
+        logger.info(f"🚀 Adapting {len(adaptation_tasks)} recipes in parallel with retry protection...")
         responses = await asyncio.gather(*adaptation_tasks, return_exceptions=True)
 
         # Build days structure
