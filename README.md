@@ -8,17 +8,17 @@ Một hệ thống Multi-Agent AI giúp quản lý dinh dưỡng cá nhân, lậ
 
 ## 📚 Mục lục
 
-- [Tính năng](#-tính-năng)
-- [Kiến trúc](#-kiến-trúc-hệ-thống)
-- [Cài đặt](#-cài-đặt)
-- [Cấu hình](#-cấu-hình)
-- [Database Setup](#-database-setup)
-- [Nạp dữ liệu](#-nạp-dữ-liệu)
-- [Chạy ứng dụng](#-chạy-ứng-dụng)
-- [API Endpoints](#-api-endpoints)
-- [Testing](#-testing)
-- [Development](#-development)
-- [Subscription Tiers](#-subscription-tiers)
+- [Tính năng](#✨-tính-năng)
+- [Kiến trúc](#🏗️-kiến-trúc-hệ-thống)
+- [Cài đặt](#🚀-cài-đặt)
+- [Cấu hình](#⚙️-cấu-hình)
+- [Database Setup](#🗄️-database-setup)
+- [Nạp dữ liệu](#📥-nạp-dữ-liệu)
+- [Chạy ứng dụng](#🎯-chạy-ứng-dụng)
+- [API Endpoints](#📡-api-endpoints)
+- [Testing](#🧪-testing)
+- [Development](#🛠️-development)
+- [Subscription Tiers](#💰-subscription-tiers)
 
 ---
 
