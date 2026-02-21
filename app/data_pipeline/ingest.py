@@ -184,7 +184,7 @@ async def ingest_from_file(json_file: str):
                 cook_time_minutes=r.get("cook_time_minutes"),
                 servings=r.get("servings"),
                 tags=r.get("tags", []),
-                nutrients=r.get("nutrients"),
+                    nutrients=r.get("nutrients", r.get("macros_estimate")),
                 vector_text=r.get("vector_text", r["name"]),
             )
             for r in recipes

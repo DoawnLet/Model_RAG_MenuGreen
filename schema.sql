@@ -391,4 +391,4 @@ CREATE TRIGGER update_meal_plans_updated_at
 CREATE TRIGGER update_shopping_lists_updated_at
     BEFORE UPDATE ON shopping_lists
     FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+    EXECUTE FUNCTION update_updated_at_column();    python -m app.main
