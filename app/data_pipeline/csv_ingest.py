@@ -88,19 +88,23 @@ async def ingest_csv(csv_path: str, limit: int = 100):
     
     for _, row in df.iterrows():
         try:
-            name = row.get(COL_MAPPING["name"], "Unknown")
+            name = str(row.get(COL_MAPPING["name"], "Unknown"))
             desc = str(row.get(COL_MAPPING["description"], ""))
             if desc == "nan": desc = ""
             
-            ingredients = parse_list_string(row.get(COL_MAPPING["ingredients"], "[]"))
-            instructions_list = parse_list_string(row.get(COL_MAPPING["steps"], "[]"))
+            ingredients = parse_list_string(str(row.get(COL_MAPPING["ingredients"], "[]")))
+            instructions_list = parse_list_string(str(row.get(COL_MAPPING["steps"], "[]")))
             instructions = "\n".join(instructions_list)
             
-            tags = parse_list_string(row.get(COL_MAPPING["tags"], "[]"))
+            tags = parse_list_string(str(row.get(COL_MAPPING["tags"], "[]")))
             
-            macros = parse_nutrition(row.get(COL_MAPPING["nutrition"], "[]"))
+            macros = parse_nutrition(str(row.get(COL_MAPPING["nutrition"], "[]")))
             
-            minutes = row.get(COL_MAPPING["minutes"], 0)
+            min_val = row.get(COL_MAPPING["minutes"], 0)
+            try:
+                minutes = int(float(min_val)) if min_val is not None else 0
+            except (ValueError, TypeError):
+                minutes = 0
             
             # Construct meaningful vector text for cross-lingual search
             # Include 'Recipe' keyword to help embedding model
@@ -111,7 +115,7 @@ async def ingest_csv(csv_path: str, limit: int = 100):
                 description=desc,
                 ingredients=ingredients,
                 instructions=instructions,
-                prep_time_minutes=int(minutes),
+                prep_time_minutes=minutes,
                 tags=tags,
                 nutrients=macros,
                 vector_text=vector_text

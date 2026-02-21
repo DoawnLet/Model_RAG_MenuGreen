@@ -18,7 +18,7 @@ CREATE TABLE user_profiles (
 );
 
 -- Ingredients Table (Master List)
-CREATE TABLE ingredients (
+CREATE TABLE ingredients (  
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     calories_per_100g NUMERIC NOT NULL,
@@ -40,7 +40,7 @@ CREATE TABLE recipes (
     servings INT,
     image_url TEXT,
     dietary_tags TEXT[], -- P1 Feature: Array of dietary restriction tags (vegetarian, vegan, gluten_free, halal, etc.)
-    embedding VECTOR(768) -- For RAG with Gemini Embedding-001
+    embedding VECTOR(3072) -- For RAG with Gemini Embedding-001 (3072D)
 );
 
 COMMENT ON COLUMN recipes.dietary_tags IS 'Dietary restriction tags: vegetarian, vegan, gluten_free, dairy_free, halal, kosher, keto, paleo, etc.';
@@ -193,8 +193,8 @@ CREATE INDEX idx_shopping_lists_meal_plan_id ON shopping_lists(meal_plan_id);
 CREATE INDEX idx_shopping_lists_status ON shopping_lists(status);
 
 -- Vector similarity search (CRITICAL for RAG performance)
--- IVFFlat index for <-> operator (L2 distance) with 768D Gemini embeddings
-CREATE INDEX idx_recipes_embedding ON recipes USING ivfflat (embedding vector_l2_ops) WITH (lists = 100);
+-- IVFFlat index for <-> operator (L2 distance) with 3072D Gemini embeddings
+CREATE INDEX idx_recipes_embedding ON recipes USING ivfflat (embedding vector_l2_ops) WITH (lists = 50);
 
 -- =====================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
@@ -293,6 +293,71 @@ CREATE POLICY shopping_lists_update ON shopping_lists
 CREATE POLICY shopping_lists_delete ON shopping_lists
     FOR DELETE
     USING (auth.uid() = user_id);
+
+-- ============================================================
+-- ADDITIONAL RLS POLICIES FOR PRODUCTION
+-- ============================================================
+
+-- User Profiles
+DROP POLICY IF EXISTS "Users can view own profile" ON user_profiles;
+CREATE POLICY "Users can view own profile" ON user_profiles FOR SELECT USING (auth.uid() = id);
+DROP POLICY IF EXISTS "Users can update own profile" ON user_profiles;
+CREATE POLICY "Users can update own profile" ON user_profiles FOR UPDATE USING (auth.uid() = id);
+DROP POLICY IF EXISTS "Users can insert own profile" ON user_profiles;
+CREATE POLICY "Users can insert own profile" ON user_profiles FOR INSERT WITH CHECK (auth.uid() = id);
+
+-- User Inventory
+DROP POLICY IF EXISTS "Users can view own inventory" ON user_inventory;
+CREATE POLICY "Users can view own inventory" ON user_inventory FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own inventory" ON user_inventory;
+CREATE POLICY "Users can insert own inventory" ON user_inventory FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own inventory" ON user_inventory;
+CREATE POLICY "Users can update own inventory" ON user_inventory FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own inventory" ON user_inventory;
+CREATE POLICY "Users can delete own inventory" ON user_inventory FOR DELETE USING (auth.uid() = user_id);
+
+-- Daily Logs
+DROP POLICY IF EXISTS "Users can view own logs" ON daily_logs;
+CREATE POLICY "Users can view own logs" ON daily_logs FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can insert own logs" ON daily_logs;
+CREATE POLICY "Users can insert own logs" ON daily_logs FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can update own logs" ON daily_logs;
+CREATE POLICY "Users can update own logs" ON daily_logs FOR UPDATE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Users can delete own logs" ON daily_logs;
+CREATE POLICY "Users can delete own logs" ON daily_logs FOR DELETE USING (auth.uid() = user_id);
+
+-- Recipes
+DROP POLICY IF EXISTS "Recipes are viewable by everyone" ON recipes;
+CREATE POLICY "Recipes are viewable by everyone" ON recipes FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Only admins can insert recipes" ON recipes;
+CREATE POLICY "Only admins can insert recipes" ON recipes FOR INSERT WITH CHECK ((auth.jwt() ->> 'role')::text = 'admin' OR (auth.jwt() -> 'user_metadata' ->> 'role')::text = 'admin');
+DROP POLICY IF EXISTS "Only admins can update recipes" ON recipes;
+CREATE POLICY "Only admins can update recipes" ON recipes FOR UPDATE USING ((auth.jwt() ->> 'role')::text = 'admin' OR (auth.jwt() -> 'user_metadata' ->> 'role')::text = 'admin');
+DROP POLICY IF EXISTS "Only admins can delete recipes" ON recipes;
+CREATE POLICY "Only admins can delete recipes" ON recipes FOR DELETE USING ((auth.jwt() ->> 'role')::text = 'admin' OR (auth.jwt() -> 'user_metadata' ->> 'role')::text = 'admin');
+
+-- Recipe Ingredients
+DROP POLICY IF EXISTS "Recipe ingredients are viewable by everyone" ON recipe_ingredients;
+CREATE POLICY "Recipe ingredients are viewable by everyone" ON recipe_ingredients FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Only admins can modify recipe ingredients" ON recipe_ingredients;
+CREATE POLICY "Only admins can modify recipe ingredients" ON recipe_ingredients FOR ALL USING ((auth.jwt() ->> 'role')::text = 'admin' OR (auth.jwt() -> 'user_metadata' ->> 'role')::text = 'admin');
+
+-- Ingredients
+DROP POLICY IF EXISTS "Ingredients are viewable by everyone" ON ingredients;
+CREATE POLICY "Ingredients are viewable by everyone" ON ingredients FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Only admins can modify ingredients" ON ingredients;
+CREATE POLICY "Only admins can modify ingredients" ON ingredients FOR ALL USING ((auth.jwt() ->> 'role')::text = 'admin' OR (auth.jwt() -> 'user_metadata' ->> 'role')::text = 'admin');
+
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_inventory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE daily_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE recipes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE recipe_ingredients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ingredients ENABLE ROW LEVEL SECURITY;
+
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 
 -- =====================================================
 -- TRIGGERS FOR AUTOMATIC UPDATED_AT

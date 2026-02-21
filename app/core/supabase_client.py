@@ -36,8 +36,10 @@ class SupabaseClient:
         from langchain_google_genai import GoogleGenerativeAIEmbeddings  # type: ignore
         
         settings = get_settings()
+        from pydantic import SecretStr
         return GoogleGenerativeAIEmbeddings(
             model=settings.embedding_model,
+            api_key=SecretStr(settings.google_api_key) if settings.google_api_key else None,
         )
 
     @classmethod

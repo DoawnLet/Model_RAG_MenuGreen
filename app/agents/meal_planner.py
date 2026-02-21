@@ -790,7 +790,7 @@ async def validation_shopping_agent(state: AgentState) -> dict:
         )
 
         # Return as formatted JSON string
-        json_output = final_output.model_dump_json(indent=2, ensure_ascii=False)
+        json_output = json.dumps(final_output.model_dump(), indent=2, ensure_ascii=False)
 
         validation_msg = ""
         if warnings:

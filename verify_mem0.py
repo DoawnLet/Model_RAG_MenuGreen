@@ -22,6 +22,8 @@ from app.agents.orchestrator import orchestrator
 print("✅ Imported orchestrator")
 
 from langchain_core.messages import HumanMessage
+from app.agents.state import AgentState
+from typing import cast
 
 async def test_direct_memory():
     print("\n🧠 Testing Direct Memory Access...")
@@ -59,10 +61,12 @@ async def test_direct_memory():
     # Handle list
     final_memories = []
     if isinstance(results, list):
-        print(f"List length: {len(results)}")
-        if len(results) > 0:
-            print(f"First item: {results[0]} (Type: {type(results[0])})")
-        final_memories = results
+        results_list = results  # Type narrowing
+        print(f"List length: {len(results_list)}")
+        if len(results_list) > 0:
+            first_item = results_list[0]  # type: ignore[index]
+            print(f"First item: {first_item} (Type: {type(first_item)})")
+        final_memories = results_list
     elif isinstance(results, dict):
         # Maybe it's inside 'results' key?
         final_memories = results.get("results", []) or results.get("memories", [])
@@ -101,11 +105,14 @@ async def test_orchestrator_integration():
     # query that should trigger memory retrieval
     message = "Gợi ý cho tôi một món ăn tối ngon."
     
-    initial_state = {
+    initial_state: AgentState = {
         "messages": [HumanMessage(content=message)],
         "user_id": user_id,
+        "user_profile": None,
+        "intent": None,
         "subscription_tier": "free",
-        "context": {}
+        "context": {},
+        "memory": None
     }
     
     print(f"   User: {message}")
