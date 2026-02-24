@@ -152,6 +152,8 @@ UNION ALL
 SELECT 'meal_plans', COUNT(*) FROM meal_plans;
 ```
 
+
+
 ---
 
 ## 💡 Tips & Best Practices
@@ -244,3 +246,5 @@ Nếu gặp vấn đề:
 ---
 
 **Happy inserting! 🎉**
+
+

@@ -20,6 +20,7 @@ from pathlib import Path
 from app.data_pipeline.scraper import RecipeScraper, generate_synthetic_recipes, RawRecipe
 from app.data_pipeline.cleaner import RecipeCleaner, CleanedRecipe, process_and_store
 from app.data_pipeline.csv_ingest import ingest_csv
+from app.data_pipeline.auto_discovery import AutoDiscoveryAgent
 from app.core.supabase_client import SupabaseClient
 
 
@@ -197,7 +198,7 @@ def main():
     parser = argparse.ArgumentParser(description="Menu Green Data Ingestion")
     parser.add_argument(
         "--mode",
-        choices=["synthetic", "scrape", "file", "csv"],
+        choices=["synthetic", "scrape", "file", "csv", "discover"],
         required=True,
         help="Ingestion mode",
     )
@@ -237,6 +238,9 @@ def main():
             print("❌ --input is required for csv mode!")
             return
         asyncio.run(ingest_csv(args.input, limit=args.count))
+    elif args.mode == "discover":
+        agent = AutoDiscoveryAgent(max_recipes_per_run=args.count)
+        asyncio.run(agent.run(max_recipes=args.count))
 
 
 

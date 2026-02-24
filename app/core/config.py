@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     app_name: str = "Menu Green"
     debug: bool = False
     
+    # Auto-Discovery Agent
+    discovery_delay_seconds: float = 2.0
+    discovery_max_per_run: int = 20
+    jina_api_key: str = ""
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
