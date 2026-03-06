@@ -1,24 +1,25 @@
-# Menu Green - Hệ điều hành Dinh dưỡng Thông minh
+# 🥗 Menu Green — Hệ điều hành Dinh dưỡng Thông minh
 
-Một hệ thống Multi-Agent AI giúp quản lý dinh dưỡng cá nhân, lập kế hoạch bữa ăn, và tối ưu hóa sức khỏe.
+Hệ thống **Multi-Agent AI** giúp quản lý dinh dưỡng cá nhân, lập kế hoạch bữa ăn và tối ưu hóa sức khỏe.
 
-**Tech Stack:** LangGraph + Google Gemini + FastAPI + Supabase (PostgreSQL + pgvector)
+**Tech Stack:** `LangGraph` · `Google Gemini` · `FastAPI` · `Supabase (PostgreSQL + pgvector)` · `Mem0` · `ChromaDB`
 
 ---
 
 ## 📚 Mục lục
 
-- [Tính năng](#✨-tính-năng)
-- [Kiến trúc](#🏗️-kiến-trúc-hệ-thống)
-- [Cài đặt](#🚀-cài-đặt)
-- [Cấu hình](#⚙️-cấu-hình)
-- [Database Setup](#🗄️-database-setup)
-- [Nạp dữ liệu](#📥-nạp-dữ-liệu)
-- [Chạy ứng dụng](#🎯-chạy-ứng-dụng)
-- [API Endpoints](#📡-api-endpoints)
-- [Testing](#🧪-testing)
-- [Development](#🛠️-development)
-- [Subscription Tiers](#💰-subscription-tiers)
+- [Tính năng](#-tính-năng)
+- [Kiến trúc hệ thống](#️-kiến-trúc-hệ-thống)
+- [Cấu trúc thư mục](#-cấu-trúc-thư-mục)
+- [Cài đặt & Cấu hình](#-cài-đặt--cấu-hình)
+- [Database Setup](#️-database-setup)
+- [Nạp dữ liệu](#-nạp-dữ-liệu)
+- [Chạy ứng dụng](#-chạy-ứng-dụng)
+- [API Endpoints](#-api-endpoints)
+- [Subscription Tiers](#-subscription-tiers)
+- [Testing & Debug](#-testing--debug)
+- [Thêm Agent mới](#️-thêm-agent-mới)
+- [Troubleshooting](#-troubleshooting)
 
 ---
 
@@ -26,77 +27,130 @@ Một hệ thống Multi-Agent AI giúp quản lý dinh dưỡng cá nhân, lậ
 
 ### Core Features
 
-- 🤖 **Multi-Agent AI**: 6 agents chuyên biệt (Recipe, Nutrition, Inventory, Web Browser, General, Permission)
-- 🔍 **Vector Search**: Tìm kiếm recipe bằng semantic search (pgvector + Gemini embeddings 768D)
-- 🏷️ **Contextual Tagging**: `#no-sleepy`, `#warming`, `#quick-lunch`, `#office-friendly` cho gợi ý thông minh
-- 📊 **Nutrition Calculation**: BMR/TDEE/Macros với công thức Mifflin-St Jeor
-- 🥘 **Inventory Management**: Theo dõi hạn sử dụng, zero-waste meal planning
-- 🌐 **Web Browsing**: Crawl recipe từ URL với Jina Reader API
-- 💰 **Subscription Tiers**: Free, Saving, Energy, Performance
-
-### Unique Features
-
-- **Context-aware recommendations**: Gợi ý dựa trên thời tiết, vai trò công việc, thời gian
-- **Vietnamese-first**: Native support cho tiếng Việt và ẩm thực Việt
-- **Science-based**: Sử dụng công thức dinh dưỡng chuẩn y khoa
-
----
-
-## 🏗️ Kiến trúc Hệ thống
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                 FastAPI Gateway                          │
-│              (app/main.py)                               │
-└────────────────────────┬────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────┐
-│          LangGraph Orchestrator                          │
-│           (app/agents/orchestrator.py)                   │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │     Intent Classifier (Gemini Flash)             │    │
-│  └─────────────────────────────────────────────────┘    │
-│                         │                                │
-│    ┌────────────────────┼────────────────────┐          │
-│    ▼                    ▼                    ▼          │
-│ ┌──────────┐      ┌──────────┐        ┌──────────┐      │
-│ │ Nutrition│      │ Inventory│        │  Recipe  │      │
-│ │  Agent   │      │  Agent   │        │   RAG    │      │
-│ └──────────┘      └──────────┘        └──────────┘      │
-│    ▼                    ▼                    ▼          │
-│ ┌──────────┐      ┌──────────┐        ┌──────────┐      │
-│ │Web Browse│      │  General │        │Permission│      │
-│ │  Agent   │      │  Agent   │        │  Denied  │      │
-│ └──────────┘      └──────────┘        └──────────┘      │
-└─────────────────────────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────────────┐
-│         Supabase (PostgreSQL + pgvector)                 │
-│  - user_profiles, recipes (with 768D embeddings)        │
-│  - user_inventory, ingredients, daily_logs               │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Agent Routing:**
-
-1. User message → Intent Classification
-2. Check subscription tier permissions
-3. Route to appropriate agent
-4. Fetch context (user profile, inventory)
-5. Generate response with LLM
-6. Return to user
+| Tính năng | Mô tả |
+|-----------|-------|
+| 🤖 **Multi-Agent AI** | 6 agents chuyên biệt: Recipe RAG, Nutrition, Inventory, Meal Planner, Web Browser, General |
+| 🔍 **Vector Search (RAG)** | Semantic search công thức với pgvector + Gemini Embeddings (768D / 3072D) |
+| 🧠 **Persistent Memory** | Mem0 + ChromaDB lưu sở thích người dùng; TTL-cache 5 phút |
+| 📊 **Nutrition Calc** | Tính BMR/TDEE/Macros theo công thức Mifflin-St Jeor |
+| 🥘 **Inventory Tracking** | Theo dõi hạn sử dụng, zero-waste meal matching |
+| 📅 **Meal Planner** | Pipeline 5 bước tạo thực đơn 7 ngày có danh sách mua hàng |
+| 🌐 **Web Browsing** | Crawl & tóm tắt công thức từ URL bất kỳ qua Jina Reader |
+| 💰 **Subscription Tiers** | Free / Saving / Energy / Performance |
+| 📈 **Observability** | Prometheus metrics tại `/metrics`; middleware đo latency mọi request |
+| 🔁 **Retry & Resilience** | Decorator `with_retry` cho mọi LLM / Supabase call |
+| 💾 **Persistence** | LangGraph PostgresSaver lưu conversation state theo `thread_id` |
 
 ---
 
-## 🚀 Cài đặt
+## 🏗️ Kiến trúc hệ thống
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│                    FastAPI Gateway                             │
+│              app/main.py  (port 8000)                         │
+│  - POST /chat         (sync, 120s timeout)                    │
+│  - POST /chat/stream  (Server-Sent Events)                    │
+│  - GET  /health  /health/db  /metrics                         │
+└───────────────────────────┬───────────────────────────────────┘
+                            │
+┌───────────────────────────▼───────────────────────────────────┐
+│             LangGraph Orchestrator (Hub-and-Spoke)            │
+│          app/agents/orchestrator.py                           │
+│                                                               │
+│  [START] → classify_intent → route_by_intent                  │
+│                                   │                           │
+│              ┌────────────────────┼────────────────────┐      │
+│              ▼                    ▼                    ▼      │
+│          [recipe]           [nutrition]         [inventory]   │
+│          [web_browsing]     [general]           [meal_plan]   │
+│          [permission_denied]                                  │
+│              │                                                │
+│              └──────────────→ save_memory → [END]            │
+└───────────────────────────────────────────────────────────────┘
+                            │
+┌───────────────────────────▼───────────────────────────────────┐
+│              Meal Plan Subgraph (5-step pipeline)             │
+│                                                               │
+│  nutrition_analyzer → recipe_retriever → meal_planner         │
+│                    → recipe_adapter → validation_shopping      │
+└───────────────────────────────────────────────────────────────┘
+                            │
+┌───────────────────────────▼───────────────────────────────────┐
+│           Data Layer                                          │
+│  Supabase (PostgreSQL + pgvector)  ←→  ChromaDB (Mem0)        │
+│  - users, recipes, ingredients, inventory, daily_logs         │
+│  - 768D / 3072D recipe embeddings (match_recipes RPC)         │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Luồng xử lý request:**
+
+1. Request gửi đến FastAPI → lấy user profile + inventory song song (asyncio.gather)
+2. `classify_intent` — heuristic URL check → Gemini Flash phân loại intent
+3. Mem0 inject user memories vào context
+4. `route_by_intent` — kiểm tra subscription permissions → chọn agent
+5. Agent xử lý → `save_memory` lưu interaction → trả response
+
+---
+
+## 📁 Cấu trúc thư mục
+
+```
+Model_RAG_MenuGreen/
+│
+├── app/
+│   ├── main.py                   # FastAPI entry point, endpoints, middleware
+│   ├── agents/
+│   │   ├── state.py              # AgentState TypedDict (shared graph state)
+│   │   ├── orchestrator.py       # LangGraph graph, intent router, all agent nodes
+│   │   ├── nutrition.py          # BMR/TDEE/Macro calculator
+│   │   ├── inventory.py          # Expiry tracking, inventory alerts
+│   │   ├── rag_tool.py           # RAGTool: pgvector semantic search
+│   │   ├── web_browser.py        # Jina Reader URL crawler
+│   │   └── meal_planner.py       # 5-agent meal planning pipeline
+│   │
+│   ├── core/
+│   │   ├── config.py             # Settings via pydantic-settings (.env)
+│   │   ├── supabase_client.py    # Supabase CRUD + async helpers
+│   │   ├── memory.py             # Mem0 MemoryManager (singleton, TTL cache)
+│   │   ├── matching.py           # Ingredient matching logic
+│   │   ├── errors.py             # Custom exceptions & ErrorResponse models
+│   │   ├── metrics.py            # Prometheus counters/gauges/histograms
+│   │   └── retry_utils.py        # with_retry decorator, safe_llm_call
+│   │
+│   └── data_pipeline/
+│       ├── ingest.py             # CLI: --mode synthetic|csv|scrape|file
+│       ├── cleaner.py            # LLM normalization + contextual tagging
+│       ├── scraper.py            # BeautifulSoup + Jina web scraper
+│       ├── csv_ingest.py         # Food.com / Recipe1M+ CSV importer
+│       └── auto_discovery.py     # Auto-crawl recipe discovery agent
+│
+├── schema.sql                    # Full database schema
+├── match_recipes_function.sql    # pgvector RPC function
+├── fix_rls.sql                   # RLS policy fixes
+├── checkpoints.sql               # LangGraph checkpoint tables
+│
+├── tests/                        # pytest test suite
+├── monitoring/                   # Prometheus/Grafana configs
+│
+├── evaluate_pipeline.py          # Pipeline evaluation script
+├── requirements.txt
+├── .env.example
+└── README.md
+```
+
+---
+
+## 🚀 Cài đặt & Cấu hình
 
 ### Prerequisites
 
-- Python 3.10+
+- Python **3.10+**
 - Supabase account (hoặc local Supabase via Docker)
 - Google Gemini API key
 
-### 1. Clone và cài dependencies
+### 1. Cài đặt dependencies
 
 ```bash
 git clone https://github.com/yourusername/menu_green.git
@@ -104,76 +158,63 @@ cd menu_green
 pip install -r requirements.txt
 ```
 
-### 2. Verify installation
+### 2. Tạo file `.env`
 
 ```bash
-# Check Python version
-python --version  # Should be 3.10+
-
-# Test imports
-python -c "import langchain; import supabase; import fastapi; print('✅ All imports successful')"
+cp .env.example .env
 ```
 
----
+Điền vào các giá trị:
 
-## ⚙️ Cấu hình
-
-### Environment Variables
-
-Tạo file `.env` trong thư mục root:
-
-```bash
-# Supabase Configuration
+```env
+# Supabase
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your-anon-or-service-role-key
+POSTGRES_URL=postgresql://postgres:password@db.xxx.supabase.co:5432/postgres
 
-# Google Gemini API
+# Google Gemini
 GOOGLE_API_KEY=your-gemini-api-key
+LLM_MODEL=gemini-2.5-flash
+EMBEDDING_MODEL=models/gemini-embedding-001
 
-# Model Configuration
-LLM_MODEL=gemini-2.0-flash-exp
-EMBEDDING_MODEL=models/text-embedding-004
-
-# App Configuration
+# App
 APP_NAME=Menu Green
-DEBUG=true
+DEBUG=false
+
+# Optional: Jina Reader (web browsing)
+JINA_API_KEY=your-jina-api-key
+
+# Optional: Auto-discovery tuning
+DISCOVERY_DELAY_SECONDS=2.0
+DISCOVERY_MAX_PER_RUN=20
 ```
 
-**Lấy API Keys:**
-
-1. **Supabase**:
-   - Tạo project tại [supabase.com](https://supabase.com)
-   - Vào Settings → API → Copy URL và `anon` key (hoặc `service_role` cho admin access)
-
-2. **Google Gemini**:
-   - Vào [Google AI Studio](https://makersuite.google.com/app/apikey)
-   - Tạo API key mới
-
-### Configuration Files
-
-- `.env`: Environment variables (không commit vào Git)
-- `app/core/config.py`: Settings management với Pydantic
-- `models_list.json`: Reference cho available Gemini models
+> **Lấy API Keys:**
+> - **Supabase**: Settings → API → URL + `anon` key
+> - **Google Gemini**: [Google AI Studio](https://makersuite.google.com/app/apikey)
+> - **Jina**: [jina.ai](https://jina.ai) (miễn phí, tùy chọn)
 
 ---
 
 ## 🗄️ Database Setup
 
-### 1. Tạo Database Schema
+### 1. Tạo schema
 
 ```bash
-# Chạy trong Supabase SQL Editor hoặc psql
+# Chạy trong Supabase SQL Editor
 psql -h your-db-host -d postgres -U postgres -f schema.sql
 ```
 
-**Schema bao gồm:**
+**Tables:**
 
-- `user_profiles`: User demographics & preferences
-- `recipes`: Recipes với pgvector embeddings (768D)
-- `ingredients`: Master ingredient list
-- `recipe_ingredients`: Many-to-many relationship
-- `user_inventory`: User pantry với expiry tracking
-- `daily_logs`: Health metrics & mood
+| Table | Mô tả |
+|-------|-------|
+| `user_profiles` | Demographics, goals, health metrics |
+| `recipes` | Recipes + pgvector embedding (768D) |
+| `ingredients` | Master ingredient list |
+| `recipe_ingredients` | Many-to-many |
+| `user_inventory` | Pantry với expiry tracking |
+| `daily_logs` | Health metrics & mood |
 
 ### 2. Tạo Vector Search Function
 
@@ -181,106 +222,92 @@ psql -h your-db-host -d postgres -U postgres -f schema.sql
 psql -h your-db-host -d postgres -U postgres -f match_recipes_function.sql
 ```
 
-Hàm này tạo RPC `match_recipes(query_embedding, match_threshold, match_count)` cho vector similarity search.
+Tạo RPC `match_recipes(query_embedding, match_threshold, match_count)`.
 
-### 3. Row Level Security (RLS)
-
-**Development (permissive):**
+### 3. LangGraph Persistence Tables
 
 ```bash
-psql -h your-db-host -d postgres -U postgres -f schema_rls_dev.sql
+psql -h your-db-host -d postgres -U postgres -f checkpoints.sql
 ```
 
-**Production (strict):**
+### 4. Row Level Security (RLS)
 
 ```bash
-psql -h your-db-host -d postgres -U postgres -f schema_rls_prod.sql
+# Development (permissive)
+psql ... -f fix_rls.sql
+
+# Production (strict) — LUÔN dùng cho production!
 ```
 
-⚠️ **Quan trọng**: Luôn dùng `schema_rls_prod.sql` cho production để bảo vệ user data!
-
-**RLS Policies Production:**
-
-- Users chỉ xem/sửa profile của họ
-- Users chỉ quản lý inventory của họ
-- Recipes: Public read, admin-only write
-- Ingredients: Public read, admin-only write
+> ⚠️ **Production RLS:** Users chỉ truy cập data của chính họ. Recipes/Ingredients: public read, admin-only write.
 
 ---
 
 ## 📥 Nạp dữ liệu
 
-Dữ liệu là "trí não" của Menu Green. Cần nạp recipes trước khi sử dụng.
+Recipes là "trí não" của hệ thống. Cần ingest trước khi chat.
 
-### Option 1: Tạo dữ liệu Synthetic (Recommended)
-
-Sử dụng Gemini để generate Vietnamese recipes:
+### Option 1: Synthetic (Khuyến nghị — dùng Gemini)
 
 ```bash
-# Generate 20 recipes across all Vietnamese cuisine categories
+# 20 recipes, tất cả category
 python -m app.data_pipeline.ingest --mode synthetic --count 20
 
-# Generate specific category
+# Category cụ thể
 python -m app.data_pipeline.ingest --mode synthetic --count 10 --category "Món Miền Nam"
 ```
 
-**Vietnamese categories supported:**
+**Vietnamese categories:** Món Miền Bắc/Trung/Nam, Món Chay, Món Âu, Món Á, Cơm, Phở/Bún/Miến, Canh/Súp, Nướng, Xào, Hấp, Salad, Smoothie, Tráng Miệng.
 
-- Món Miền Bắc, Miền Trung, Miền Nam
-- Món Chay, Món Âu, Món Á
-- Cơm, Phở/Bún/Miến, Canh/Súp
-- Món Nướng, Món Xào, Món Hấp
-- Salad, Smoothie, Món Tráng Miệng
-
-### Option 2: Nạp từ CSV (Food.com/Recipe1M+)
+### Option 2: CSV (Food.com / Recipe1M+)
 
 ```bash
 python -m app.data_pipeline.ingest --mode csv --input "path/to/recipes.csv" --limit 100
 ```
 
-**CSV format cần:**
+Columns cần: `name`, `ingredients`, `steps`, `nutrition`.
 
-- Columns: `name`, `ingredients`, `steps`, `nutrition` (PDV format)
-
-### Option 3: Scrape từ website
+### Option 3: Scrape từ URL
 
 ```bash
 python -m app.data_pipeline.ingest --mode scrape --urls "https://cookpad.com/vn/recipe/..."
 ```
 
-### Option 4: Import từ JSON
+### Option 4: Auto-Discovery
 
 ```bash
-python -m app.data_pipeline.ingest --mode file --input "raw_recipes.json"
+python run_auto_discovery.py
 ```
 
-**Pipeline flow:**
+Agent tự crawl và phát hiện công thức mới theo lịch.
 
-1. **Ingest**: Load raw data (synthetic/scrape/file/csv)
-2. **Clean**: LLM normalization + contextual tagging
-3. **Embed**: Generate 768D vectors với Gemini Embedding-001
-4. **Store**: Insert vào Supabase với retry logic
+**Pipeline Flow:**
+
+```
+Ingest (raw data) → Cleaner (LLM normalize + tag) → Embed (768D) → Supabase (pgvector)
+```
 
 ---
 
 ## 🎯 Chạy ứng dụng
 
-### Development Server
+### Development
 
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-- API docs: http://localhost:8000/docs
-- Health check: http://localhost:8000/health
+- Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Health check: [http://localhost:8000/health](http://localhost:8000/health)
+- Prometheus metrics: [http://localhost:8000/metrics](http://localhost:8000/metrics)
 
-### Production Server
+### Production
 
 ```bash
-# With Gunicorn
+# Gunicorn
 gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 
-# With Docker
+# Docker
 docker build -t menu-green .
 docker run -p 8000:8000 --env-file .env menu-green
 ```
@@ -289,31 +316,28 @@ docker run -p 8000:8000 --env-file .env menu-green
 
 ## 📡 API Endpoints
 
-### Health Check
+### `GET /health`
 
-```bash
-GET /health
+```json
+{ "status": "healthy", "version": "0.1.0" }
 ```
 
-Response:
+### `GET /health/db`
+
+Kiểm tra Supabase connection và PostgreSQL pool (nếu có).
+
+### `GET /metrics`
+
+Prometheus metrics (HTTP requests, latency, errors, cache stats, system health).
+
+### `POST /chat`
 
 ```json
 {
-  "status": "healthy",
-  "version": "0.1.0"
-}
-```
-
-### Chat (Sync)
-
-```bash
-POST /chat
-Content-Type: application/json
-
-{
   "message": "Tìm món ăn từ cà chua và trứng",
   "user_id": "uuid-here",
-  "history": []
+  "thread_id": "optional-thread-id",
+  "conversation_history": []
 }
 ```
 
@@ -326,26 +350,19 @@ Response:
 }
 ```
 
-### Chat (Streaming)
+> Timeout: **120 giây**. `thread_id` dùng cho LangGraph persistence (nếu không truyền, dùng `user_id`).
 
-```bash
-POST /chat/stream
-Content-Type: application/json
+### `POST /chat/stream`
 
-{
-  "message": "Tính TDEE cho tôi",
-  "user_id": "uuid-here"
-}
-```
-
-Response: Server-Sent Events (SSE)
+Giống `/chat` nhưng trả về **Server-Sent Events**:
 
 ```
-data: {"content": "Dựa vào"}
-data: {"content": " thông tin"}
-data: {"content": " của bạn..."}
+data: {"node": "recipe", "content": "Dựa vào..."}
+data: {"node": "save_memory", "content": ""}
 data: {"done": true}
 ```
+
+Streaming theo từng node LangGraph. Có timeout check 120 giây.
 
 ### Error Response Format
 
@@ -353,305 +370,146 @@ data: {"done": true}
 {
   "code": "subscription_required",
   "message": "This feature requires Saving tier or higher",
-  "details": {
-    "required_tier": "saving",
-    "current_tier": "free",
-    "feature": "inventory_management"
-  },
+  "details": { "required_tier": "saving", "current_tier": "free", "feature": "inventory_management" },
   "suggestion": "Upgrade to Saving tier to access inventory management"
 }
 ```
 
-**Error Codes:**
-
-- `unauthorized`: Chưa đăng nhập
-- `subscription_required`: Cần nâng cấp gói
-- `invalid_input`: Input không hợp lệ
-- `rate_limit_exceeded`: Quá giới hạn requests
-- `gemini_error`: Lỗi AI service
-- `supabase_error`: Lỗi database
-- `internal_error`: Lỗi hệ thống
-
----
-
-## 🧪 Testing
-
-### Unit Tests
-
-```bash
-# Test matching logic
-python evaluate_pipeline.py
-
-# Test orchestrator với mock
-python test_context_mock.py
-
-# Test với real API (cần API keys)
-python test_context.py
-```
-
-### Integration Tests
-
-```bash
-# Test Supabase connection
-python verify_supabase.py
-
-# Test Gemini embeddings
-python verify_gemini.py
-
-# Test web browsing agent
-python verify_crawling.py
-
-# Check data count
-python check_data.py
-```
-
-### Debug Tools
-
-```bash
-# Debug Gemini models
-python debug_gemini.py
-
-# Test different embedding dimensions
-python verify_gemini.py --model models/text-embedding-004
-```
-
----
-
-## 🛠️ Development
-
-### Project Structure
-
-```
-menu_green/
-├── app/
-│   ├── main.py              # FastAPI entry point
-│   ├── agents/              # LangGraph agents
-│   │   ├── orchestrator.py  # Central router
-│   │   ├── nutrition.py     # BMR/TDEE calc
-│   │   ├── inventory.py     # Expiry tracking
-│   │   ├── rag_tool.py      # Vector search
-│   │   └── web_browser.py   # Jina Reader
-│   ├── core/                # Core utilities
-│   │   ├── config.py        # Settings
-│   │   ├── supabase_client.py
-│   │   ├── matching.py      # Ingredient logic
-│   │   └── errors.py        # Error handling
-│   └── data_pipeline/       # Data ingestion
-│       ├── ingest.py        # CLI orchestrator
-│       ├── scraper.py       # Web scraping
-│       ├── cleaner.py       # LLM normalization
-│       └── csv_ingest.py    # CSV import
-├── schema.sql               # Database schema
-├── match_recipes_function.sql  # Vector search RPC
-├── schema_rls_dev.sql       # Dev RLS policies
-├── schema_rls_prod.sql      # Production RLS
-├── requirements.txt
-└── README.md
-```
-
-### Adding New Agents
-
-1. **Create agent file**: `app/agents/my_agent.py`
-
-```python
-from app.agents.orchestrator import AgentState
-
-def my_agent(state: AgentState) -> AgentState:
-    """Agent description."""
-    # Your logic here
-    return state
-```
-
-2. **Update orchestrator**: `app/agents/orchestrator.py`
-
-```python
-# Add intent in classify_intent()
-INTENT_PROMPT = """...
-- my_intent: Description
-"""
-
-# Add permission
-TIER_PERMISSIONS = {
-    "free": [..., "my_intent"],
-    # ...
-}
-
-# Add routing
-def route_by_intent(state: AgentState) -> str:
-    if state["intent"] == "my_intent":
-        return "my_agent_node"
-    # ...
-
-# Add to graph
-graph_builder.add_node("my_agent_node", my_agent)
-graph_builder.add_edge("my_agent_node", END)
-```
-
-3. **Write tests**: `tests/agents/test_my_agent.py`
-
-### Code Style
-
-- **Formatting**: Follow PEP 8
-- **Type hints**: Use for all functions
-- **Docstrings**: Google style
-- **Async**: Prefer async/await for I/O ops
-- **Error handling**: Use custom exceptions from `app/core/errors.py`
-
-### Git Workflow
-
-```bash
-# Create feature branch
-git checkout -b feature/my-feature
-
-# Make changes + tests
-git add .
-git commit -m "feat: add my feature"
-
-# Push and create PR
-git push origin feature/my-feature
-```
-
----
+**Error Codes:** `unauthorized` · `subscription_required` · `invalid_input` · `rate_limit_exceeded` · `gemini_error` · `supabase_error` · `internal_error`
 
 ---
 
 ## 💰 Subscription Tiers
 
-| Gói             | Giá/tháng | Tính năng                                                                            |
-| --------------- | --------- | ------------------------------------------------------------------------------------ |
-| **Free**        | $0        | ✅ Tìm recipe cơ bản<br>✅ Chat với AI<br>✅ Web browsing                            |
-| **Saving**      | $4.99     | + ✅ Quản lý inventory<br>+ ✅ Zero-waste matching<br>+ ✅ Expiry alerts             |
-| **Energy**      | $9.99     | + ✅ Meal planner<br>+ ✅ Contextual tagging<br>+ ✅ Weather-based suggestions       |
-| **Performance** | $14.99    | + ✅ Nutrition calculator (BMR/TDEE)<br>+ ✅ Macro tracking<br>+ ✅ Health analytics |
+| Gói | Giá/tháng | Intent được phép |
+|-----|-----------|-----------------|
+| **Free** | $0 | `recipe_search`, `general`, `web_browsing` |
+| **Saving** | $4.99 | + `inventory_check` |
+| **Energy** | $9.99 | + `meal_plan` |
+| **Performance** | $14.99 | + `nutrition_calc` |
 
 **Feature Matrix:**
 
-| Feature                 | Free | Saving | Energy | Performance |
-| ----------------------- | ---- | ------ | ------ | ----------- |
-| Recipe search           | ✅   | ✅     | ✅     | ✅          |
-| General chat            | ✅   | ✅     | ✅     | ✅          |
-| Web browsing            | ✅   | ✅     | ✅     | ✅          |
-| Inventory management    | ❌   | ✅     | ✅     | ✅          |
-| Expiry tracking         | ❌   | ✅     | ✅     | ✅          |
-| Zero-waste matching     | ❌   | ✅     | ✅     | ✅          |
-| Meal planner            | ❌   | ❌     | ✅     | ✅          |
-| Contextual tags         | ❌   | ❌     | ✅     | ✅          |
-| Nutrition calculator    | ❌   | ❌     | ❌     | ✅          |
-| BMR/TDEE/Macro tracking | ❌   | ❌     | ❌     | ✅          |
+| Feature | Free | Saving | Energy | Performance |
+|---------|------|--------|--------|-------------|
+| Recipe search (RAG) | ✅ | ✅ | ✅ | ✅ |
+| General Q&A | ✅ | ✅ | ✅ | ✅ |
+| Web browsing | ✅ | ✅ | ✅ | ✅ |
+| Inventory management | ❌ | ✅ | ✅ | ✅ |
+| Expiry tracking | ❌ | ✅ | ✅ | ✅ |
+| Meal planner (7 ngày) | ❌ | ❌ | ✅ | ✅ |
+| Nutrition calc (BMR/TDEE) | ❌ | ❌ | ❌ | ✅ |
+| Macro tracking | ❌ | ❌ | ❌ | ✅ |
+
+---
+
+## 🧪 Testing & Debug
+
+### Integration Tests
+
+```bash
+python verify_supabase.py      # Test Supabase connection
+python verify_gemini.py        # Test Gemini embeddings
+python verify_crawling.py      # Test web browsing agent
+python verify_mem0.py          # Test Mem0 memory
+python verify_monitoring.py    # Test Prometheus metrics
+python check_data.py           # Đếm số recipes trong DB
+```
+
+### Evaluation
+
+```bash
+python evaluate_pipeline.py    # Đánh giá chất lượng RAG pipeline
+```
+
+### Debug Tools
+
+```bash
+python debug_gemini.py         # Debug Gemini models available
+python inspect_schema.py       # Inspect DB schema
+```
+
+### Pytest
+
+```bash
+pytest tests/ -v
+pytest tests/ -v --asyncio-mode=auto
+```
+
+---
+
+## 🛠️ Thêm Agent mới
+
+### 1. Tạo agent file
+
+```python
+# app/agents/my_agent.py
+from app.agents.state import AgentState
+from langchain_core.messages import AIMessage
+
+def my_agent(state: AgentState) -> dict:
+    """Mô tả agent."""
+    # Logic của bạn
+    return {"messages": [AIMessage(content="Response")]}
+```
+
+### 2. Đăng ký vào Orchestrator (`app/agents/orchestrator.py`)
+
+```python
+# Bước 1: Thêm intent vào INTENT_PROMPT
+# Bước 2: Thêm permission vào TIER_PERMISSIONS
+TIER_PERMISSIONS = {
+    "free": [..., "my_intent"],
+    ...
+}
+# Bước 3: Thêm route
+routes = { "my_intent": "my_agent_node", ... }
+# Bước 4: Thêm node và edge vào graph
+workflow.add_node("my_agent_node", my_agent)
+workflow.add_edge("my_agent_node", "save_memory")
+```
+
+### 3. Viết tests
+
+```python
+# tests/agents/test_my_agent.py
+```
 
 ---
 
 ## 🔧 Troubleshooting
 
-### Common Issues
+| Lỗi | Giải pháp |
+|-----|-----------|
+| `Supabase connection failed` | Kiểm tra `SUPABASE_URL`, `SUPABASE_KEY` trong `.env`. Chạy `python verify_supabase.py` |
+| `Gemini quota exceeded` | Giảm batch size, thêm `time.sleep()`, hoặc upgrade quota tại Google AI Studio |
+| `No recipes found` | Chạy `python check_data.py` → nếu 0 recipes, chạy data ingestion |
+| `Vector search no results` | Kiểm tra embedding dimension (768D). Verify `match_recipes` function tồn tại trong DB |
+| `Permission denied (RLS)` | Đang dùng production RLS. Dùng `fix_rls.sql` cho dev |
+| `asyncio.TimeoutError` | Orchestrator vượt 120s. Thử request đơn giản hơn |
+| `Mem0 / ChromaDB error` | Xóa `mem0_chroma_db/` và `mem0_history.db`, khởi động lại |
 
-**1. "Supabase connection failed"**
-
-```bash
-# Check .env file
-cat .env | grep SUPABASE
-
-# Test connection
-python verify_supabase.py
-```
-
-**2. "Gemini API error: quota exceeded"**
-
-- Giảm batch size trong ingestion
-- Thêm rate limiting với `time.sleep()`
-- Upgrade Gemini quota tại Google AI Studio
-
-**3. "No recipes found"**
-
-```bash
-# Check if data was ingested
-python check_data.py
-
-# Re-ingest data
-python -m app.data_pipeline.ingest --mode synthetic --count 20
-```
-
-**4. "Vector search returns no results"**
-
-- Check embedding dimension (should be 768D for Gemini Embedding-001)
-- Verify `match_recipes` function exists:
-  ```sql
-  SELECT routine_name FROM information_schema.routines WHERE routine_name = 'match_recipes';
-  ```
-
-**5. "Permission denied error"**
-
-- Check RLS policies are applied
-- For development, use `schema_rls_dev.sql`
-- Verify user_id matches authenticated user
-
-### Debug Mode
-
-Enable detailed logging:
+### Enable Debug Logging
 
 ```python
-# app/main.py
+# app/main.py hoặc khi start uvicorn
 import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
 
 ---
 
-## 📚 Additional Resources
-
-**Documentation:**
+## 📚 Tài liệu tham khảo
 
 - [LangGraph Docs](https://langchain-ai.github.io/langgraph/)
 - [Google Gemini API](https://ai.google.dev/docs)
 - [Supabase Docs](https://supabase.com/docs)
 - [pgvector](https://github.com/pgvector/pgvector)
-
-**Vietnamese NLP:**
-
-- [underthesea](https://github.com/undertheseanlp/underthesea) - Vietnamese NLP toolkit
-- [PhoBERT](https://github.com/VinAIResearch/PhoBERT) - Vietnamese BERT
-
-**Nutrition Science:**
-
-- [Mifflin-St Jeor Equation](https://en.wikipedia.org/wiki/Basal_metabolic_rate#BMR_estimation_formulas)
-- [USDA FoodData Central](https://fdc.nal.usda.gov/)
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repo
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
-
-**Guidelines:**
-
-- Follow existing code style
-- Add tests for new features
-- Update README if needed
-- Keep commits atomic and descriptive
-
----
-
-## 📝 License
-
-This project is licensed under the MIT License - see LICENSE file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- **LangChain/LangGraph**: For agent orchestration framework
-- **Google Gemini**: For powerful LLM and embeddings
-- **Supabase**: For BaaS with pgvector support
-- **Vietnamese community**: For cuisine inspiration
+- [Mem0 Docs](https://docs.mem0.ai)
+- [Mifflin-St Jeor BMR Formula](https://en.wikipedia.org/wiki/Basal_metabolic_rate#BMR_estimation_formulas)
 
 ---
 
 **Made with ❤️ and 🥗 by Menu Green Team**
 
-_Last updated: February 11, 2026_
+_Last updated: March 2026_

@@ -199,9 +199,89 @@ class HealthResponse(BaseModel):
     version: str
 
 
+# ─── Onboarding Models ───────────────────────────────────────────────────────
+
+class OnboardingProfileRequest(BaseModel):
+    """Form thu thập thông tin cá nhân người dùng."""
+    user_id: str
+    name: str
+    age: Optional[int] = None
+    gender: Optional[str] = None          # "male" | "female" | "other"
+    weight_kg: Optional[float] = None
+    height_cm: Optional[float] = None
+    activity_level: Optional[str] = None  # sedentary|light|moderate|active|very_active
+    goal: Optional[str] = None            # lose_fat|maintain|gain_muscle
+    dietary_preferences: Optional[list[str]] = None  # ["vegan", "gluten_free"]
+    allergies: Optional[list[str]] = None            # ["seafood", "peanut"]
+
+
+class InventoryItem(BaseModel):
+    """Một nguyên liệu trong kho của user."""
+    name: str
+    quantity: float
+    unit: str = "g"                  # g, ml, pcs, ...
+    expiry_date: Optional[str] = None   # "YYYY-MM-DD"
+    category: Optional[str] = None      # "vegetable", "meat", "dairy", ...
+
+
+class OnboardingInventoryRequest(BaseModel):
+    """Danh sách nguyên liệu user nhập vào."""
+    user_id: str
+    items: list[InventoryItem]
+
+
 # ============================================================================
 # Endpoints
 # ============================================================================
+
+
+# ─── Onboarding Endpoints ────────────────────────────────────────────────────
+
+@app.post("/onboarding/profile", status_code=201)
+async def save_profile(request: OnboardingProfileRequest):
+    """
+    Lưu thông tin cá nhân người dùng (onboarding form).
+    Dùng khi đăng nhập lần đầu hoặc cập nhật profile.
+    """
+    data = request.model_dump(exclude={"user_id"}, exclude_none=True)
+    try:
+        result = await SupabaseClient.upsert_user_profile_async(request.user_id, data)
+        return {"success": True, "profile": result}
+    except Exception as e:
+        logger.error(f"Failed to save profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/onboarding/inventory", status_code=201)
+async def save_inventory(request: OnboardingInventoryRequest):
+    """
+    Lưu danh sách nguyên liệu user đang có.
+    """
+    items = [item.model_dump() for item in request.items]
+    try:
+        await SupabaseClient.upsert_user_inventory_async(request.user_id, items)
+        return {"success": True, "saved": len(items)}
+    except Exception as e:
+        logger.error(f"Failed to save inventory: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/user/{user_id}/profile")
+async def get_profile(user_id: str):
+    """Lấy thông tin profile của user."""
+    profile = await SupabaseClient.get_user_profile_async(user_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return profile
+
+
+@app.get("/user/{user_id}/inventory")
+async def get_inventory(user_id: str):
+    """Lấy danh sách nguyên liệu của user."""
+    inventory = await SupabaseClient.get_user_inventory_async(user_id)
+    return {"user_id": user_id, "items": inventory, "count": len(inventory)}
+
+
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():

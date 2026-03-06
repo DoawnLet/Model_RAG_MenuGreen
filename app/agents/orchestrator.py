@@ -34,6 +34,7 @@ from app.agents.meal_planner import (
     recipe_adapter_agent,
     validation_shopping_agent,
 )
+from app.agents.calorie_agent import calorie_lookup_agent
 from app.core.retry_utils import with_retry, safe_llm_call
 
 
@@ -69,7 +70,10 @@ NHIỆM VỤ: Phân loại tin nhắn vào MỘT trong các intent sau:
 4. **inventory_check**: Kiểm tra kho nguyên liệu, hạn sử dụng
    Ví dụ: "Nguyên liệu nào sắp hết hạn?", "Kiểm tra tủ lạnh", "Còn gì trong kho?"
 
-5. **meal_plan**: Lập kế hoạch bữa ăn 7 ngày
+6. **calorie_lookup**: Hỏi lượng calo/dinh dưỡng của một MÓN ĂN cụ thể
+   Ví dụ: "Phở bò bao nhiêu calo?", "Bún bò có bao nhiêu protein?", "Tính calo cơm tấm"
+
+7. **meal_plan**: Lập kế hoạch bữa ăn 7 ngày
    Ví dụ: "Lên thực đơn tuần", "Kế hoạch ăn giảm cân", "Meal prep cho 1 tuần"
 
 6. **general**: Câu hỏi chung về sức khỏe, dinh dưỡng, lời khuyên
@@ -92,77 +96,85 @@ Assistant: nutrition_calc
 """
 
 
+
 def classify_intent(state: AgentState) -> dict:
     """
     Classify user intent from the latest message.
-    
-    This node analyzes the user's message and determines which 
-    specialized agent should handle it.
-    
+
+    Priority:
+    1. Heuristic: URL → web_browsing (no model needed)
+    2. ONNX local model (fast, no API cost) — nếu model đã export
+    3. Gemini API fallback (nếu ONNX chưa sẵn sàng)
+
     P1 Reliability: LLM calls wrapped with retry decorator.
     """
     from app.core.memory import get_memory_manager
     from app.core.retry_utils import with_retry
     settings = get_settings()
-    
+
     # --- MEMORY INJECTION ---
     user_id = state.get("user_id") or "default_user"
     memory_manager = get_memory_manager()
-    # Fetch relevant memories (e.g. top 5) based on the last message
     last_msg_content = state["messages"][-1].content
     if isinstance(last_msg_content, str):
         memories = memory_manager.get_formatted_context(user_id, last_msg_content)
     else:
         memories = ""
-    
-    # Update state with memory
-    # Note: In a real LangGraph, we might want to do this in a separate node, 
-    # but doing it here saves a step.
     state["memory"] = memories
     # ------------------------
 
     # Heuristic: If message contains http/https, likely web browsing
     last_message = state["messages"][-1]
-    # Type guard: ensure content is string
     if not isinstance(last_message.content, str):
         return {"intent": "general"}
-    
+
     message_content: str = last_message.content
     url_pattern = r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+"
     if re.search(url_pattern, message_content):
         return {"intent": "web_browsing"}
 
+    # ── ONNX LOCAL CLASSIFIER (fast path) ──────────────────────────
+    try:
+        from app.core.intent_classifier_onnx import get_onnx_classifier
+        onnx_classifier = get_onnx_classifier()
+        if onnx_classifier is not None:
+            intent = onnx_classifier.predict(message_content)
+            logger.info(f"[ONNX] Intent classified: {intent}")
+            return {"intent": intent}
+    except Exception as e:
+        logger.warning(f"[ONNX] Classification failed, falling back to Gemini: {e}")
+    # ───────────────────────────────────────────────────────────────
+
+    # ── GEMINI API FALLBACK ─────────────────────────────────────────
     llm = ChatGoogleGenerativeAI(
         model=settings.llm_model,
         google_api_key=settings.google_api_key,
         temperature=0,
     )
-    
-    # P1 Reliability: Wrap LLM call with safe_llm_call helper
+
     from app.core.retry_utils import safe_llm_call
     import asyncio
-    
+
     async def _classify():
         return await llm.ainvoke([
             {"role": "system", "content": INTENT_PROMPT},
             {"role": "user", "content": message_content},
         ])
-    
+
     try:
         response = asyncio.run(_classify())
     except Exception as e:
         logger.error(f"Intent classification failed: {e}")
         return {"intent": "general"}
-    
-    # Type guard: ensure response content is string
+
     if not isinstance(response.content, str):
         return {"intent": "general"}
-    
+
     intent = response.content.strip().lower()
-    
+
     # Validate intent
-    valid_intents = ["recipe_search", "nutrition_calc", "inventory_check", 
-                     "meal_plan", "general", "web_browsing", "unknown"]
+    valid_intents = ["recipe_search", "nutrition_calc", "inventory_check",
+                     "meal_plan", "calorie_lookup", "general", "web_browsing", "unknown"]
     if intent not in valid_intents:
         valid_found = False
         for valid in valid_intents:
@@ -172,7 +184,7 @@ def classify_intent(state: AgentState) -> dict:
                 break
         if not valid_found:
             intent = "general"
-    
+
     return {"intent": intent}
 
 
@@ -181,11 +193,11 @@ def classify_intent(state: AgentState) -> dict:
 # ============================================================================
 
 TIER_PERMISSIONS = {
-    "free": ["recipe_search", "general", "unknown", "web_browsing"],
-    "saving": ["recipe_search", "general", "unknown", "inventory_check", "web_browsing"],
-    "energy": ["recipe_search", "general", "unknown", "inventory_check", "meal_plan", "web_browsing"],
-    "performance": ["recipe_search", "general", "unknown", "inventory_check", 
-                    "meal_plan", "nutrition_calc", "web_browsing"],
+    "free": ["recipe_search", "general", "unknown", "web_browsing", "calorie_lookup"],
+    "saving": ["recipe_search", "general", "unknown", "inventory_check", "web_browsing", "calorie_lookup"],
+    "energy": ["recipe_search", "general", "unknown", "inventory_check", "meal_plan", "web_browsing", "calorie_lookup"],
+    "performance": ["recipe_search", "general", "unknown", "inventory_check",
+                    "meal_plan", "nutrition_calc", "web_browsing", "calorie_lookup"],
 }
 
 
@@ -242,44 +254,77 @@ def inventory_agent(state: AgentState) -> dict:
 
 async def recipe_agent(state: AgentState) -> dict:
     """
-    Handle recipe search requests using RAG with retry logic.
-    Available to all tiers.
+    User-Aware Recipe Agent.
+    Đọc user profile + inventory để gợi ý món phù hợp:
+    - Lọc theo dietary_preferences và allergies
+    - Ưu tiên recipe dùng nguyên liệu user có sẵn
     """
     try:
-        # Inject Memory
         user_memory = state.get("memory", "")
-        
-        # Initialize RAG Tool
+        user_profile = state.get("user_profile") or {}
+        inventory = state.get("context", {}).get("inventory", [])
+
         client = SupabaseClient.get_client()
         rag = RAGTool(client, SupabaseClient.create_embedding)
-        
+
         last_message = state["messages"][-1]
-        # Type guard: ensure content is string
         if not isinstance(last_message.content, str):
             return {"messages": [AIMessage(content="❌ Không thể xử lý tin nhắn này.")]}
-        
+
         message_content: str = last_message.content
-        
-        # Wrap RAG search with retry decorator
+
+        # Build context-aware search query from user profile
+        search_query = message_content
+        allergies = user_profile.get("allergies") or []
+        preferences = user_profile.get("dietary_preferences") or []
+        goal = user_profile.get("goal", "")
+
+        # Enrich query with user context
+        if inventory:
+            ing_names = []
+            for inv in inventory[:5]:  # top 5 ingredients
+                if isinstance(inv, dict):
+                    name = inv.get("ingredients", {}).get("name") if isinstance(inv.get("ingredients"), dict) else inv.get("name", "")
+                    if name:
+                        ing_names.append(name)
+            if ing_names:
+                search_query += f" với nguyên liệu: {', '.join(ing_names)}"
+
+        # Wrap RAG search with retry
         @with_retry(max_attempts=3, base_delay=1.0)
         async def search_with_retry():
-            return await rag.search_by_text(message_content, limit=3)
-        
+            return await rag.search_by_text(search_query, limit=5)
+
         recipes = await search_with_retry()
+
+        # Filter out recipes with allergens
+        if allergies and recipes:
+            filtered = []
+            for r in recipes:
+                recipe_text = (r.get("name", "") + " " + str(r.get("description", ""))).lower()
+                has_allergen = any(a.lower() in recipe_text for a in allergies)
+                if not has_allergen:
+                    filtered.append(r)
+            recipes = filtered if filtered else recipes  # Keep all if everything filtered
+
         response = format_recipe_results(recipes)
-        
-        # Add context-aware suggestion if user has inventory
-        inventory = state.get("context", {}).get("inventory", [])
-        if inventory and not recipes:
-            response += "\n\n💡 Gợi ý: Hãy thử tìm món ăn với nguyên liệu bạn đang có!"
-            
+
+        # Add personalized note
+        if goal == "lose_fat":
+            response += "\n\n💡 _Ưu tiên món ít calo, nhiều rau xanh và protein._"
+        elif goal == "gain_muscle":
+            response += "\n\n💡 _Ưu tiên món giàu protein (thịt, trứng, đậu)._"
+
+        if not recipes and inventory:
+            response += "\n\n💡 Thêm nguyên liệu bạn đang có để tìm món phù hợp hơn!"
+
         if user_memory:
-             response += f"\n\n(Lưu ý từ ký ức: {user_memory})"
+            response += f"\n\n_(Ký ức: {user_memory})_"
 
     except Exception as e:
         logger.error(f"Recipe agent failed: {e}")
-        response = f"❌ Lỗi khi tìm kiếm công thức. Vui lòng thử lại sau."
-        
+        response = "❌ Lỗi khi tìm kiếm công thức. Vui lòng thử lại sau."
+
     return {"messages": [AIMessage(content=response)]}
 
 
@@ -437,11 +482,12 @@ def route_by_intent(state: AgentState) -> str:
         "web_browsing": "web_browsing",
         "nutrition_calc": "nutrition",
         "inventory_check": "inventory",
-        "meal_plan": "meal_plan_workflow",  # 5-step meal planning pipeline
+        "meal_plan": "meal_plan_workflow",
+        "calorie_lookup": "calorie",
         "general": "general",
         "unknown": "general",
     }
-    
+
     return routes.get(intent, "general")
 
 
@@ -502,6 +548,7 @@ def create_orchestrator(checkpointer=None):
     workflow.add_node("nutrition", nutrition_agent)
     workflow.add_node("inventory", inventory_agent)
     workflow.add_node("recipe", recipe_agent)
+    workflow.add_node("calorie", calorie_lookup_agent)  # NEW: tính calo theo tên món
     workflow.add_node("web_browsing", web_browsing_agent)
     workflow.add_node("general", general_agent)
     workflow.add_node("permission_denied", permission_denied_agent)
@@ -519,6 +566,7 @@ def create_orchestrator(checkpointer=None):
             "nutrition": "nutrition",
             "inventory": "inventory",
             "recipe": "recipe",
+            "calorie": "calorie",
             "web_browsing": "web_browsing",
             "meal_plan_workflow": "meal_plan_workflow",
             "general": "general",
@@ -531,6 +579,7 @@ def create_orchestrator(checkpointer=None):
     workflow.add_edge("nutrition", "save_memory")
     workflow.add_edge("inventory", "save_memory")
     workflow.add_edge("recipe", "save_memory")
+    workflow.add_edge("calorie", "save_memory")
     workflow.add_edge("web_browsing", "save_memory")
     workflow.add_edge("general", "save_memory")
     workflow.add_edge("meal_plan_workflow", "save_memory")
