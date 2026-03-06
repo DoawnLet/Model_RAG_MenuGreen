@@ -11,11 +11,6 @@
 # 3. Chạy từng cell (nếu .ipynb) hoặc python train_intent_classifier.py
 # ============================================================
 
-# ============================================================
-# CELL 1: Install dependencies
-# ============================================================
-# !pip install transformers datasets scikit-learn optimum[exporters] onnxruntime -q
-
 import json
 import numpy as np
 import torch
@@ -55,7 +50,7 @@ CONFIG = {
     "weight_decay": 0.01,
     
     "output_dir": "./menu_green_intent_model",
-    "dataset_path": "./intent_dataset.json",
+    "dataset_path": "training/intent_dataset.json",
 }
 
 LABEL_NAMES = [
@@ -152,7 +147,7 @@ print(f"✅ Model loaded: {total_params/1e6:.1f}M parameters")
 
 
 # ============================================================
-# CELL 6: Training Arguments
+# CELL 6: TrainingArguments & Metrics
 # ============================================================
 
 training_args = TrainingArguments(
@@ -160,22 +155,20 @@ training_args = TrainingArguments(
     num_train_epochs=CONFIG["num_epochs"],
     per_device_train_batch_size=CONFIG["batch_size"],
     per_device_eval_batch_size=CONFIG["batch_size"],
-    learning_rate=CONFIG["learning_rate"],
     warmup_ratio=CONFIG["warmup_ratio"],
     weight_decay=CONFIG["weight_decay"],
-    
-    evaluation_strategy="epoch",
+    learning_rate=CONFIG["learning_rate"],
+    logging_dir="./logs",
+    logging_steps=100,
+    eval_strategy="epoch",  # Fix for transformers >= 4.46.0
     save_strategy="epoch",
     load_best_model_at_end=True,
     metric_for_best_model="accuracy",
     greater_is_better=True,
-    
-    logging_steps=10,
-    fp16=torch.cuda.is_available(),  # Mixed precision nếu có GPU
-    
-    report_to="none",  # Tắt wandb
+    report_to="none",  # Disable integrations like wandb
+    fp16=torch.cuda.is_available(),
+    push_to_hub=False,
 )
-
 
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
