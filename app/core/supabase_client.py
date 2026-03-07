@@ -45,91 +45,219 @@ class SupabaseClient:
     @classmethod
     async def create_embedding(cls, text: str) -> list[float]:
         """
-        Create embedding vector for text using Google Gemini.
-        
-        Args:
-            text: Text to embed
-            
-        Returns:
-            Embedding vector (768 dimensions for models/text-embedding-004)
+        Create embedding vector for text.
+        Priority: ONNX local (BAAI/bge-m3) → Gemini API fallback.
+        """
+        try:
+            from app.core.embedding_onnx import get_embedding
+            return await get_embedding(text)
+        except Exception as e:
+            logger.warning(f"ONNX embedding failed, using Gemini: {e}")
+            return await cls.create_embedding_gemini(text)
+
+    @classmethod
+    async def create_embedding_gemini(cls, text: str) -> list[float]:
+        """
+        Create embedding via Gemini API (fallback).
         """
         embeddings = cls.get_google_embeddings()
         return await embeddings.aembed_query(text)
     
     @classmethod
     def get_user_profile(cls, user_id: str) -> Optional[dict[str, Any]]:
-        """Fetch user profile from Supabase.
-        
-        Returns None if user_id is invalid or profile not found.
-        """
+        """Fetch user profile from Supabase."""
         try:
-            # Validate UUID format
             import uuid
             uuid.UUID(user_id)
-            
             client = cls.get_client()
             response = client.table("user_profiles").select("*").eq("id", user_id).single().execute()
             return response.data if response.data else None  # type: ignore
         except (ValueError, Exception) as e:
-            # Invalid UUID or query error - return None for graceful degradation
             logger.warning(f"Failed to fetch user profile for {user_id}: {e}")
             return None
-    
+
     @classmethod
-    def get_user_inventory(cls, user_id: str) -> list[dict[str, Any]]:
-        """Fetch user's inventory items.
-        
-        Returns empty list if user_id is invalid or no inventory found.
+    def upsert_user_profile(cls, user_id: str, data: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """
+        Upsert user profile (insert or update).
+        Dùng cho onboarding form.
         """
         try:
-            # Validate UUID format
+            client = cls.get_client()
+            payload = {"id": user_id, **data}
+            response = (
+                client.table("user_profiles")
+                .upsert(payload, on_conflict="id")
+                .execute()
+            )
+            return response.data[0] if response.data else None  # type: ignore
+        except Exception as e:
+            logger.error(f"Failed to upsert user profile for {user_id}: {e}")
+            raise
+
+    @classmethod
+    def get_user_inventory(cls, user_id: str) -> list[dict[str, Any]]:
+        """Fetch user's inventory items with ingredient names."""
+        try:
             import uuid
             uuid.UUID(user_id)
-            
             client = cls.get_client()
             response = (
                 client.table("user_inventory")
-                .select("*, ingredients(name)")
+                .select("*, ingredients(name, calories_per_100g, protein_per_100g, carbs_per_100g, fat_per_100g)")
                 .eq("user_id", user_id)
                 .execute()
             )
             return response.data or []  # type: ignore
         except (ValueError, Exception) as e:
-            # Invalid UUID or query error - return empty list
             logger.warning(f"Failed to fetch inventory for {user_id}: {e}")
             return []
-    
+
+    @classmethod
+    def upsert_user_inventory(cls, user_id: str, items: list[dict[str, Any]]) -> bool:
+        """
+        Bulk upsert user inventory items.
+        items: [{"name": "cà chua", "quantity": 500, "unit": "g", "expiry_date": "2026-03-15"}, ...]
+        
+        - Tìm ingredient_id theo tên trong bảng ingredients
+        - Nếu chưa có ingredient → tạo mới
+        - Upsert vào user_inventory
+        """
+        try:
+            client = cls.get_client()
+            upserted = []
+
+            for item in items:
+                ingredient_name = item.get("name", "").strip()
+                if not ingredient_name:
+                    continue
+
+                # 1. Tìm ingredient theo tên
+                ing_res = (
+                    client.table("ingredients")
+                    .select("id")
+                    .ilike("name", ingredient_name)
+                    .limit(1)
+                    .execute()
+                )
+
+                if ing_res.data:
+                    ingredient_id = ing_res.data[0]["id"]
+                else:
+                    # 2. Tạo ingredient mới nếu chưa có
+                    new_ing = client.table("ingredients").insert({
+                        "name": ingredient_name,
+                        "calories_per_100g": item.get("calories_per_100g", 0),
+                        "protein_per_100g": item.get("protein_per_100g", 0),
+                        "carbs_per_100g": item.get("carbs_per_100g", 0),
+                        "fat_per_100g": item.get("fat_per_100g", 0),
+                        "category": item.get("category", "other"),
+                    }).execute()
+                    ingredient_id = new_ing.data[0]["id"]
+
+                # 3. Upsert vào user_inventory
+                upserted.append({
+                    "user_id": user_id,
+                    "ingredient_id": ingredient_id,
+                    "quantity": item.get("quantity", 0),
+                    "unit": item.get("unit", "g"),
+                    "expiry_date": item.get("expiry_date"),
+                })
+
+            if upserted:
+                client.table("user_inventory").upsert(
+                    upserted, on_conflict="user_id,ingredient_id"
+                ).execute()
+
+            logger.info(f"✅ Upserted {len(upserted)} inventory items for user {user_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to upsert inventory for {user_id}: {e}")
+            raise
+
+    @classmethod
+    def get_recipe_calories_by_name(cls, dish_name: str) -> Optional[dict[str, Any]]:
+        """
+        Tra cứu calo của món ăn theo tên trong DB.
+        Returns: {calories, protein, carbs, fat, recipe_name} hoặc None
+        """
+        try:
+            client = cls.get_client()
+            result = (
+                client.table("recipes")
+                .select("name, calories_per_serving, protein_per_serving, carbs_per_serving, fat_per_serving")
+                .ilike("name", f"%{dish_name}%")
+                .limit(1)
+                .execute()
+            )
+            if result.data and result.data[0].get("calories_per_serving"):
+                r = result.data[0]
+                return {
+                    "recipe_name": r["name"],
+                    "calories": r["calories_per_serving"],
+                    "protein": r.get("protein_per_serving", 0),
+                    "carbs": r.get("carbs_per_serving", 0),
+                    "fat": r.get("fat_per_serving", 0),
+                }
+        except Exception as e:
+            logger.warning(f"DB calorie lookup failed for '{dish_name}': {e}")
+        return None
+
     @classmethod
     def get_user_subscription(cls, user_id: str) -> str:
-        """
-        Get user's subscription tier.
-        In production, this would query Supabase Auth metadata.
-        """
-        # TODO: Implement actual subscription check
-        # For now, return "free" as default
+        """Get user's subscription tier from Supabase."""
+        try:
+            import uuid
+            uuid.UUID(user_id)
+            client = cls.get_client()
+            response = (
+                client.table("user_subscriptions")
+                .select("tier")
+                .eq("user_id", user_id)
+                .eq("is_active", True)
+                .single()
+                .execute()
+            )
+            if response.data:
+                return response.data.get("tier", "free")  # type: ignore
+        except Exception as e:
+            logger.warning(f"Failed to fetch subscription for {user_id}: {e}")
         return "free"
-    
+
     # ========================================================================
-    # Async versions for parallel execution (P0 Performance Optimization)
+    # Async versions
     # ========================================================================
-    
+
     @classmethod
     async def get_user_profile_async(cls, user_id: str) -> Optional[dict[str, Any]]:
-        """Async version: Fetch user profile from Supabase."""
+        """Async: Fetch user profile."""
         import asyncio
         return await asyncio.to_thread(cls.get_user_profile, user_id)
-    
+
     @classmethod
     async def get_user_inventory_async(cls, user_id: str) -> list[dict[str, Any]]:
-        """Async version: Fetch user's inventory items."""
+        """Async: Fetch user inventory."""
         import asyncio
         return await asyncio.to_thread(cls.get_user_inventory, user_id)
-    
+
     @classmethod
     async def get_user_subscription_async(cls, user_id: str) -> str:
-        """Async version: Get user's subscription tier."""
+        """Async: Get subscription tier."""
         import asyncio
         return await asyncio.to_thread(cls.get_user_subscription, user_id)
+
+    @classmethod
+    async def upsert_user_profile_async(cls, user_id: str, data: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """Async: Upsert user profile."""
+        import asyncio
+        return await asyncio.to_thread(cls.upsert_user_profile, user_id, data)
+
+    @classmethod
+    async def upsert_user_inventory_async(cls, user_id: str, items: list[dict[str, Any]]) -> bool:
+        """Async: Upsert user inventory."""
+        import asyncio
+        return await asyncio.to_thread(cls.upsert_user_inventory, user_id, items)
 
 
 # Convenience functions
@@ -139,5 +267,5 @@ def get_supabase() -> Client:
 
 
 async def create_embedding(text: str) -> list[float]:
-    """Create embedding for text."""
+    """Create embedding for text (ONNX → Gemini fallback)."""
     return await SupabaseClient.create_embedding(text)
