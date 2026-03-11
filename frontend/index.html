@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Menu Green AI</title>
+    <!-- Premium Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <!-- Highlight.js for code rendering -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo-container">
+                <div class="logo-icon"><i class="fa-solid fa-leaf"></i></div>
+                <h1 class="logo-text">Menu Green</h1>
+            </div>
+            
+            <div class="sidebar-section">
+                <h2 class="section-title">Model Operations</h2>
+                <button id="trainBtn" class="premium-button primary-btn">
+                    <i class="fa-solid fa-brain"></i> Train Local Intent Model
+                </button>
+                <div id="trainStatus" class="status-indicator hidden">
+                    <div class="spinner"></div> <span id="trainStatusText">Training...</span>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <h2 class="section-title">Current Session</h2>
+                <div class="settings-group">
+                    <label for="userIdInput">User ID</label>
+                    <input type="text" id="userIdInput" class="glass-input" value="user_123" placeholder="Enter Context User ID">
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="system-status">
+                    <div class="status-dot green"></div>
+                    <span>System Normal</span>
+                </div>
+                <div class="version-tag">Alpha v0.1.0</div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-container">
+            <header class="chat-header">
+                <h2>Intelligence Orchestrator</h2>
+                <div class="header-actions">
+                    <button class="icon-btn tooltip" data-tooltip="Clear Chat" id="clearBtn"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            </header>
+            
+            <div class="chat-messages" id="chatMessages">
+                <div class="message support">
+                    <div class="avatar"><i class="fa-solid fa-leaf"></i></div>
+                    <div class="message-content">
+                        Xin chào! Mình là hệ điều hành dinh dưỡng Menu Green. Mình có thể giúp gì cho bạn hôm nay?
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chat-input-container">
+                <form id="chatForm">
+                    <div class="input-wrapper">
+                        <input type="text" id="messageInput" class="glass-input big-input" placeholder="Nhập câu hỏi dinh dưỡng..." autocomplete="off">
+                        <button type="submit" id="sendBtn" class="icon-btn submit-btn"><i class="fa-solid fa-paper-plane"></i></button>
+                    </div>
+                </form>
+                <div class="input-disclaimer">AI có thể cung cấp thông tin không chính xác. Hãy tự kiểm chứng các thông tin quan trọng.</div>
+            </div>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

@@ -89,7 +89,7 @@ Assistant: nutrition_calc
 """
 
 
-def classify_intent(state: AgentState) -> dict:
+async def classify_intent(state: AgentState) -> dict:
     """
     Classify user intent from the latest message.
 
@@ -145,18 +145,13 @@ def classify_intent(state: AgentState) -> dict:
         temperature=0,
     )
 
-    import asyncio
-
-    async def _classify():
-        return await llm.ainvoke(
+    try:
+        response = await llm.ainvoke(
             [
                 {"role": "system", "content": INTENT_PROMPT},
                 {"role": "user", "content": message_content},
             ]
         )
-
-    try:
-        response = asyncio.run(_classify())
     except Exception as e:
         logger.error(f"Intent classification failed: {e}")
         return {"intent": "general"}

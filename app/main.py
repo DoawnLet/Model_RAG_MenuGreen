@@ -8,12 +8,19 @@ from typing import Optional, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, Response
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, BaseMessage
+from fastapi.staticfiles import StaticFiles
 import json
 import asyncio
 import logging
 import time
+import os
+import sys
+import logging
+import time
+import subprocess
 
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg import Connection
@@ -296,6 +303,30 @@ async def get_inventory(user_id: str):
     return {"user_id": user_id, "items": inventory, "count": len(inventory)}
 
 
+@app.post("/train/intent")
+async def train_intent_model():
+    """Trigger the local training script for the Intent Classifier."""
+    try:
+        def _run_training():
+            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "training", "train_intent_classifier.py"))
+            return subprocess.run(
+                [sys.executable, "-X", "utf8", script_path],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace"
+            )
+
+        process = await run_in_threadpool(_run_training)
+        
+        if process.returncode == 0:
+            return {"status": "success", "message": "Model trained successfully!", "details": process.stdout}
+        else:
+            raise HTTPException(status_code=500, detail=f"Training failed: {process.stderr}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
@@ -514,6 +545,14 @@ async def chat_stream(request: ChatRequest):
         generate(),
         media_type="text/event-stream",
     )
+
+
+# ============================================================================
+# Static Files (Frontend UI)
+# Mount this LAST so it doesn't override API routes!
+# ============================================================================
+os.makedirs("frontend", exist_ok=True)
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 
 # ============================================================================
