@@ -64,14 +64,16 @@ def _lookup_db(dish_name: str) -> dict | None:
         client = SupabaseClient.get_client()
         result = (
             client.table("recipes")
-            .select("name, calories_per_serving, protein_per_serving, carbs_per_serving, fat_per_serving")
+            .select(
+                "name, calories_per_serving, protein_per_serving, carbs_per_serving, fat_per_serving"
+            )
             .ilike("name", f"%{dish_name}%")
             .limit(1)
             .execute()
         )
         if result.data:
-            r = result.data[0]
-            if r.get("calories_per_serving"):
+            r = dict(result.data[0]) if isinstance(result.data[0], dict) else result.data[0] # type: ignore
+            if r.get("calories_per_serving"): # type: ignore
                 return {
                     "calories": r["calories_per_serving"],
                     "protein": r.get("protein_per_serving", 0),
@@ -112,7 +114,7 @@ def _format_calorie_response(dish_name: str, data: dict, source: str = "local") 
 async def calorie_lookup_agent(state: AgentState) -> dict:
     """
     Agent tính calo theo tên món ăn.
-    
+
     Thứ tự ưu tiên:
     1. Bảng local (nhanh, 0ms)
     2. Database Supabase (chính xác nhất)
@@ -132,52 +134,102 @@ async def calorie_lookup_agent(state: AgentState) -> dict:
         temperature=0,
     )
 
-    extract_response = await llm.ainvoke([
-        {"role": "system", "content": (
-            "Trích xuất TÊN MÓN ĂN từ câu hỏi. Chỉ trả về tên món, không thêm gì khác.\n"
-            "Ví dụ: 'Phở bò có bao nhiêu calo?' → 'phở bò'\n"
-            "Ví dụ: 'Tính calo của bún bò huế' → 'bún bò huế'"
-        )},
-        {"role": "user", "content": message},
-    ])
+    extract_response = await llm.ainvoke(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "Trích xuất TÊN MÓN ĂN từ câu hỏi. Chỉ trả về tên món, không thêm gì khác.\n"
+                    "Ví dụ: 'Phở bò có bao nhiêu calo?' → 'phở bò'\n"
+                    "Ví dụ: 'Tính calo của bún bò huế' → 'bún bò huế'"
+                ),
+            },
+            {"role": "user", "content": message},
+        ]
+    )
 
-    dish_name = extract_response.content.strip().lower() if isinstance(extract_response.content, str) else ""
+    dish_name = (
+        extract_response.content.strip().lower()
+        if isinstance(extract_response.content, str)
+        else ""
+    )
 
     if not dish_name:
-        return {"messages": [AIMessage(content="❌ Không xác định được tên món. Vui lòng nói rõ tên món ăn.")]}
+        return {
+            "messages": [
+                AIMessage(
+                    content="❌ Không xác định được tên món. Vui lòng nói rõ tên món ăn."
+                )
+            ]
+        }
 
     logger.info(f"[CalorieAgent] Looking up: '{dish_name}'")
 
     # 1. Local lookup
     local_data = _lookup_local(dish_name)
     if local_data:
-        return {"messages": [AIMessage(content=_format_calorie_response(dish_name, local_data, "local"))]}
+        return {
+            "messages": [
+                AIMessage(
+                    content=_format_calorie_response(dish_name, local_data, "local")
+                )
+            ]
+        }
 
     # 2. DB lookup
     db_data = _lookup_db(dish_name)
     if db_data:
-        return {"messages": [AIMessage(content=_format_calorie_response(dish_name, db_data, "database"))]}
+        return {
+            "messages": [
+                AIMessage(
+                    content=_format_calorie_response(dish_name, db_data, "database")
+                )
+            ]
+        }
 
     # 3. Gemini fallback
-    logger.info(f"[CalorieAgent] Not found locally/DB, asking Gemini for: '{dish_name}'")
-    gemini_response = await llm.ainvoke([
-        {"role": "system", "content": (
-            "Bạn là chuyên gia dinh dưỡng. Ước tính calories và macros cho món ăn.\n"
-            "Trả về JSON format: {\"calories\": số, \"protein\": số, \"carbs\": số, \"fat\": số}\n"
-            "Đơn vị: kcal cho calories, gram cho protein/carbs/fat.\n"
-            "Tính cho 1 khẩu phần ăn bình thường của người Việt Nam."
-        )},
-        {"role": "user", "content": f"Tính dinh dưỡng cho: {dish_name}"},
-    ])
+    logger.info(
+        f"[CalorieAgent] Not found locally/DB, asking Gemini for: '{dish_name}'"
+    )
+    gemini_response = await llm.ainvoke(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "Bạn là chuyên gia dinh dưỡng. Ước tính calories và macros cho món ăn.\n"
+                    'Trả về JSON format: {"calories": số, "protein": số, "carbs": số, "fat": số}\n'
+                    "Đơn vị: kcal cho calories, gram cho protein/carbs/fat.\n"
+                    "Tính cho 1 khẩu phần ăn bình thường của người Việt Nam."
+                ),
+            },
+            {"role": "user", "content": f"Tính dinh dưỡng cho: {dish_name}"},
+        ]
+    )
 
-    import json, re
+    import json
+    import re
+
     try:
-        content = gemini_response.content if isinstance(gemini_response.content, str) else ""
-        json_match = re.search(r'\{.*?\}', content, re.DOTALL)
+        content = (
+            gemini_response.content if isinstance(gemini_response.content, str) else ""
+        )
+        json_match = re.search(r"\{.*?\}", content, re.DOTALL)
         if json_match:
             nutrition = json.loads(json_match.group())
-            return {"messages": [AIMessage(content=_format_calorie_response(dish_name, nutrition, "gemini"))]}
+            return {
+                "messages": [
+                    AIMessage(
+                        content=_format_calorie_response(dish_name, nutrition, "gemini")
+                    )
+                ]
+            }
     except Exception as e:
         logger.error(f"[CalorieAgent] Gemini parse failed: {e}")
 
-    return {"messages": [AIMessage(content=f"❌ Không tìm được thông tin dinh dưỡng cho **{dish_name}**. Vui lòng thử tên món khác.")]}
+    return {
+        "messages": [
+            AIMessage(
+                content=f"❌ Không tìm được thông tin dinh dưỡng cho **{dish_name}**. Vui lòng thử tên món khác."
+            )
+        ]
+    }

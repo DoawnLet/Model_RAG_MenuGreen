@@ -1,4 +1,3 @@
-import pytest
 from app.agents.nutrition import (
     calculate_bmr, 
     calculate_tdee, 

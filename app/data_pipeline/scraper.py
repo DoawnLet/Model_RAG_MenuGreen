@@ -2,6 +2,7 @@
 Web Scraper for Vietnamese Recipe Sites.
 Demonstrates scraping from Cookpad VN or similar sites.
 """
+
 import asyncio
 import httpx
 from bs4 import BeautifulSoup
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 
 class RawRecipe(BaseModel):
     """Raw scraped recipe data (unstructured)."""
+
     source_url: str
     title: str
     raw_ingredients: str  # Raw text, not parsed
@@ -23,20 +25,20 @@ class RecipeScraper:
     Simple scraper for recipe websites.
     Note: Always respect robots.txt and rate limits!
     """
-    
+
     def __init__(self, delay_seconds: float = 1.0):
         self.delay = delay_seconds
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
-    
+
     async def scrape_cookpad_recipe(self, url: str) -> Optional[RawRecipe]:
         """
         Scrape a single recipe from Cookpad VN.
-        
+
         Args:
             url: Recipe URL
-            
+
         Returns:
             RawRecipe or None if failed
         """
@@ -44,26 +46,34 @@ class RecipeScraper:
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, headers=self.headers, timeout=10)
                 response.raise_for_status()
-                
+
             soup = BeautifulSoup(response.text, "html.parser")
-            
+
             # Extract title
             title_elem = soup.select_one("h1.recipe-title, h1[class*='title']")
             title = title_elem.get_text(strip=True) if title_elem else "Unknown"
-            
+
             # Extract ingredients (usually in a list)
-            ingredients_elem = soup.select("div.ingredient-list li, [class*='ingredient'] li")
-            raw_ingredients = "\n".join([li.get_text(strip=True) for li in ingredients_elem])
-            
+            ingredients_elem = soup.select(
+                "div.ingredient-list li, [class*='ingredient'] li"
+            )
+            raw_ingredients = "\n".join(
+                [li.get_text(strip=True) for li in ingredients_elem]
+            )
+
             # Extract instructions
-            instructions_elem = soup.select("div.step-text, [class*='instruction'] li, [class*='step'] p")
-            raw_instructions = "\n".join([step.get_text(strip=True) for step in instructions_elem])
-            
+            instructions_elem = soup.select(
+                "div.step-text, [class*='instruction'] li, [class*='step'] p"
+            )
+            raw_instructions = "\n".join(
+                [step.get_text(strip=True) for step in instructions_elem]
+            )
+
             # Extract image
             image_elem = soup.select_one("img.recipe-image, [class*='recipe'] img")
             img_src = image_elem.get("src") if image_elem else None
             image_url = str(img_src) if img_src and isinstance(img_src, str) else None
-            
+
             return RawRecipe(
                 source_url=url,
                 title=title,
@@ -71,35 +81,35 @@ class RecipeScraper:
                 raw_instructions=raw_instructions or "No instructions found",
                 image_url=image_url,
             )
-            
+
         except Exception as e:
             print(f"❌ Error scraping {url}: {e}")
             return None
-    
+
     async def scrape_multiple(self, urls: list[str]) -> list[RawRecipe]:
         """
         Scrape multiple URLs with rate limiting.
-        
+
         Args:
             urls: List of recipe URLs
-            
+
         Returns:
             List of successfully scraped recipes
         """
         recipes = []
-        
+
         for i, url in enumerate(urls):
-            print(f"📥 Scraping {i+1}/{len(urls)}: {url[:50]}...")
+            print(f"📥 Scraping {i + 1}/{len(urls)}: {url[:50]}...")
             recipe = await self.scrape_cookpad_recipe(url)
-            
+
             if recipe:
                 recipes.append(recipe)
                 print(f"   ✅ Got: {recipe.title}")
-            
+
             # Rate limiting
             if i < len(urls) - 1:
                 await asyncio.sleep(self.delay)
-        
+
         return recipes
 
 
@@ -135,14 +145,16 @@ Tạo {count} món:
 """
 
 
-async def generate_synthetic_recipes(count: int = 10, category: Optional[str] = None) -> list[dict]:
+async def generate_synthetic_recipes(
+    count: int = 10, category: Optional[str] = None
+) -> list[dict]:
     """
     Generate synthetic Vietnamese recipes using Google Gemini.
-    
+
     Args:
         count: Number of recipes to generate
         category: Optional cuisine category to focus on (e.g. "Món canh", "Món chay")
-        
+
     Returns:
         List of recipe dictionaries
     """
@@ -150,38 +162,44 @@ async def generate_synthetic_recipes(count: int = 10, category: Optional[str] = 
     from langchain_core.messages import SystemMessage, HumanMessage
     from app.core.config import get_settings
     import json
-    
+
     settings = get_settings()
     llm = ChatGoogleGenerativeAI(
         model=settings.llm_model,
         google_api_key=settings.google_api_key,
-        temperature=0.9, # Higher temperature for variety
+        temperature=0.9,  # Higher temperature for variety
     )
-    
+
     prompt_text = SYNTHETIC_PROMPT.format(count=count)
     if category:
         prompt_text += f"\n\n👉 CHỦ ĐỀ SÁNG TẠO: Hãy tập trung vào các món thuộc nhóm '{category}'. Đảm bảo không trùng lặp."
-    
-    print(f"🤖 Generating {count} synthetic recipes (Category: {category or 'General'})...")
-    
-    response = await llm.ainvoke([
-        SystemMessage(content="You are a Vietnamese cuisine expert. Output valid JSON only."),
-        HumanMessage(content=prompt_text),
-    ])
-    
+
+    print(
+        f"🤖 Generating {count} synthetic recipes (Category: {category or 'General'})..."
+    )
+
+    response = await llm.ainvoke(
+        [
+            SystemMessage(
+                content="You are a Vietnamese cuisine expert. Output valid JSON only."
+            ),
+            HumanMessage(content=prompt_text),
+        ]
+    )
+
     try:
         # Type guard for response.content
         if not isinstance(response.content, str):
             print("❌ LLM returned non-string content")
             return []
-        
+
         content = response.content.strip()
         if content.startswith("```json"):
             content = content[7:]
         if content.endswith("```"):
             content = content[:-3]
         content = content.strip()
-        
+
         result = json.loads(content)
         # Handle both {"recipes": [...]} and [...] formats
         recipes = result.get("recipes", result) if isinstance(result, dict) else result
@@ -196,17 +214,18 @@ async def generate_synthetic_recipes(count: int = 10, category: Optional[str] = 
 # Demo Usage
 # ============================================================================
 
+
 async def demo():
     """Demo the scraper and synthetic generator."""
-    
+
     # Option 1: Scrape (requires valid URLs)
     # scraper = RecipeScraper(delay_seconds=1.5)
     # urls = ["https://cookpad.com/vn/cong-thuc/123456"]
     # recipes = await scraper.scrape_multiple(urls)
-    
+
     # Option 2: Generate synthetic data
     recipes = await generate_synthetic_recipes(count=5)
-    
+
     for r in recipes:
         print(f"\n📝 {r.get('name', 'Unknown')}")
         print(f"   Ingredients: {', '.join(r.get('ingredients', [])[:3])}...")

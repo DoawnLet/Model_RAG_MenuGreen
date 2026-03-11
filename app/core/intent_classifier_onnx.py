@@ -14,7 +14,6 @@ import json
 import os
 import logging
 import numpy as np
-from functools import lru_cache
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -147,9 +146,7 @@ class ONNXIntentClassifier:
             "label": label_names[pred_id],
             "label_id": pred_id,
             "score": float(probs[pred_id]),
-            "all_scores": {
-                name: float(probs[i]) for i, name in enumerate(label_names)
-            },
+            "all_scores": {name: float(probs[i]) for i, name in enumerate(label_names)},
         }
 
     def is_available(self) -> bool:

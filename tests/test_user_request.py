@@ -13,5 +13,5 @@ response = requests.post(
 )
 
 print(f"Status: {response.status_code}")
-print(f"\nResponse:")
+print("\nResponse:")
 print(json.dumps(response.json(), indent=2, ensure_ascii=False))

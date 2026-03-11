@@ -16,7 +16,7 @@ import os
 import numpy as np
 
 print("🔄 Loading dependencies...")
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer
 from optimum.exporters.onnx import main_export
 import onnxruntime as ort
 
@@ -41,7 +41,7 @@ LABEL_NAMES = [
 # Step 1: Export sang ONNX
 # ============================================================
 
-print(f"\n📦 Exporting to ONNX...")
+print("\n📦 Exporting to ONNX...")
 print(f"  Source: {TRAINED_MODEL_PATH}")
 print(f"  Output: {ONNX_OUTPUT_PATH}")
 
@@ -56,7 +56,7 @@ main_export(
     monolith=True,           # Gộp thành 1 file model.onnx
 )
 
-print(f"\n✅ ONNX export done!")
+print("\n✅ ONNX export done!")
 print(f"Files in {ONNX_OUTPUT_PATH}:")
 for f in sorted(os.listdir(ONNX_OUTPUT_PATH)):
     size_mb = os.path.getsize(os.path.join(ONNX_OUTPUT_PATH, f)) / (1024 * 1024)
@@ -150,7 +150,7 @@ avg = np.mean(times)
 p95 = np.percentile(times, 95)
 print(f"  Average:  {avg:.1f} ms")
 print(f"  P95:      {p95:.1f} ms")
-print(f"  (Compare: Gemini API ~500-2000ms)")
+print("  (Compare: Gemini API ~500-2000ms)")
 
 
 # ============================================================

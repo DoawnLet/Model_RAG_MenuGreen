@@ -18,11 +18,9 @@ Thứ tự insert phải tuân theo foreign key dependencies:
 QUAN TRỌNG: Chạy schema_fixes.sql TRƯỚC để fix RLS và embedding dimension!
 """
 
-import asyncio
 import os
 import sys
-from datetime import date, datetime, timedelta
-from uuid import UUID
+from datetime import date, timedelta
 from typing import cast, Any
 
 sys.path.append(os.getcwd())

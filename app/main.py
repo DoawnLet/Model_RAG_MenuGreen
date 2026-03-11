@@ -2,8 +2,9 @@
 Menu Green - FastAPI Entry Point
 Exposes the LangGraph orchestrator via REST API.
 """
+
 from contextlib import asynccontextmanager
-from typing import Optional, Literal, cast
+from typing import Optional, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, Response
@@ -19,15 +20,13 @@ from psycopg import Connection
 from psycopg.rows import dict_row, DictRow
 from psycopg_pool import ConnectionPool
 
-from app.agents.orchestrator import get_compiled_graph, AgentState
+from app.agents.orchestrator import get_compiled_graph
 from app.core.config import get_settings
 from app.core.supabase_client import SupabaseClient
 from app.core.errors import (
     MenuGreenException,
     ErrorResponse,
     ErrorCode,
-    GeminiAPIException,
-    SupabaseException,
 )
 from app.core.metrics import (
     http_requests_total,
@@ -45,26 +44,29 @@ logger = logging.getLogger(__name__)
 # Lifespan & App Setup
 # ============================================================================
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
     settings = get_settings()
     print(f"🌿 {settings.app_name} starting...")
-    print(f"📡 Supabase URL: {settings.supabase_url[:30]}..." if settings.supabase_url else "⚠️ Supabase not configured")
+    print(
+        f"📡 Supabase URL: {settings.supabase_url[:30]}..."
+        if settings.supabase_url
+        else "⚠️ Supabase not configured"
+    )
 
     # Initialize Postgres Persistence
     if settings.postgres_url:
         print("💾 Initializing LangGraph Persistence...")
         # Use sync ConnectionPool with PostgresSaver (properly typed)
         pool: ConnectionPool[Connection[DictRow]] = ConnectionPool(
-            conninfo=settings.postgres_url, 
-            kwargs={"row_factory": dict_row},
-            open=False
+            conninfo=settings.postgres_url, kwargs={"row_factory": dict_row}, open=False
         )
         pool.open()
         checkpointer = PostgresSaver(pool)
-        checkpointer.setup() # Create tables if not exist
+        checkpointer.setup()  # Create tables if not exist
         app.state.orchestrator = get_compiled_graph(checkpointer)
         app.state.db_pool = pool
     else:
@@ -73,7 +75,7 @@ async def lifespan(app: FastAPI):
         app.state.db_pool = None
 
     yield
-    
+
     # Shutdown
     print("🌿 Menu Green shutting down...")
     if app.state.db_pool:
@@ -101,23 +103,26 @@ app.add_middleware(
 # Monitoring Middleware (P2 Observability)
 # ============================================================================
 
+
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next):
     """Track HTTP request metrics."""
     start_time = time.time()
-    
+
     # Process request
     response = await call_next(request)
-    
+
     # Record metrics
     duration = time.time() - start_time
     method = request.method
     endpoint = request.url.path
     status = response.status_code
-    
+
     http_requests_total.labels(method=method, endpoint=endpoint, status=status).inc()
-    http_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(duration)
-    
+    http_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(
+        duration
+    )
+
     return response
 
 
@@ -125,22 +130,23 @@ async def metrics_middleware(request: Request, call_next):
 # Exception Handlers
 # ============================================================================
 
+
 @app.exception_handler(MenuGreenException)
 async def menu_green_exception_handler(request: Request, exc: MenuGreenException):
     """Handle custom Menu Green exceptions."""
     logger.error(f"MenuGreenException: {exc.code} - {exc.message}")
-    
+
     # P2 Observability: Track error
-    record_error(error_type='MenuGreenException', endpoint=request.url.path)
-    
+    record_error(error_type="MenuGreenException", endpoint=request.url.path)
+
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(
             code=exc.code,
             message=exc.message,
             details=exc.details,
-            suggestion=exc.suggestion
-        ).model_dump()
+            suggestion=exc.suggestion,
+        ).model_dump(),
     )
 
 
@@ -148,16 +154,15 @@ async def menu_green_exception_handler(request: Request, exc: MenuGreenException
 async def value_error_handler(request: Request, exc: ValueError):
     """Handle ValueError exceptions."""
     logger.error(f"ValueError: {str(exc)}")
-    
+
     # P2 Observability: Track error
-    record_error(error_type='ValueError', endpoint=request.url.path)
-    
+    record_error(error_type="ValueError", endpoint=request.url.path)
+
     return JSONResponse(
         status_code=400,
         content=ErrorResponse(
-            code=ErrorCode.INVALID_INPUT,
-            message=str(exc)
-        ).model_dump()
+            code=ErrorCode.INVALID_INPUT, message=str(exc)
+        ).model_dump(),
     )
 
 
@@ -170,8 +175,8 @@ async def general_exception_handler(request: Request, exc: Exception):
         content=ErrorResponse(
             code=ErrorCode.INTERNAL_ERROR,
             message="An unexpected error occurred",
-            suggestion="Please try again later or contact support"
-        ).model_dump()
+            suggestion="Please try again later or contact support",
+        ).model_dump(),
     )
 
 
@@ -179,8 +184,10 @@ async def general_exception_handler(request: Request, exc: Exception):
 # Request/Response Models
 # ============================================================================
 
+
 class ChatRequest(BaseModel):
     """Request body for chat endpoint."""
+
     message: str
     user_id: Optional[str] = None
     thread_id: Optional[str] = None
@@ -189,43 +196,49 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """Response body for chat endpoint."""
+
     response: str
     intent: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
     """Health check response."""
+
     status: str
     version: str
 
 
 # ─── Onboarding Models ───────────────────────────────────────────────────────
 
+
 class OnboardingProfileRequest(BaseModel):
     """Form thu thập thông tin cá nhân người dùng."""
+
     user_id: str
     name: str
     age: Optional[int] = None
-    gender: Optional[str] = None          # "male" | "female" | "other"
+    gender: Optional[str] = None  # "male" | "female" | "other"
     weight_kg: Optional[float] = None
     height_cm: Optional[float] = None
     activity_level: Optional[str] = None  # sedentary|light|moderate|active|very_active
-    goal: Optional[str] = None            # lose_fat|maintain|gain_muscle
+    goal: Optional[str] = None  # lose_fat|maintain|gain_muscle
     dietary_preferences: Optional[list[str]] = None  # ["vegan", "gluten_free"]
-    allergies: Optional[list[str]] = None            # ["seafood", "peanut"]
+    allergies: Optional[list[str]] = None  # ["seafood", "peanut"]
 
 
 class InventoryItem(BaseModel):
     """Một nguyên liệu trong kho của user."""
+
     name: str
     quantity: float
-    unit: str = "g"                  # g, ml, pcs, ...
-    expiry_date: Optional[str] = None   # "YYYY-MM-DD"
-    category: Optional[str] = None      # "vegetable", "meat", "dairy", ...
+    unit: str = "g"  # g, ml, pcs, ...
+    expiry_date: Optional[str] = None  # "YYYY-MM-DD"
+    category: Optional[str] = None  # "vegetable", "meat", "dairy", ...
 
 
 class OnboardingInventoryRequest(BaseModel):
     """Danh sách nguyên liệu user nhập vào."""
+
     user_id: str
     items: list[InventoryItem]
 
@@ -236,6 +249,7 @@ class OnboardingInventoryRequest(BaseModel):
 
 
 # ─── Onboarding Endpoints ────────────────────────────────────────────────────
+
 
 @app.post("/onboarding/profile", status_code=201)
 async def save_profile(request: OnboardingProfileRequest):
@@ -282,7 +296,6 @@ async def get_inventory(user_id: str):
     return {"user_id": user_id, "items": inventory, "count": len(inventory)}
 
 
-
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint."""
@@ -294,17 +307,17 @@ async def health_check_db():
     """Database health check endpoint."""
     try:
         # Check Supabase connection (primary database)
-        result = SupabaseClient.get_client().table("recipes").select("id").limit(1).execute()
-        
+        SupabaseClient.get_client().table("recipes").select("id").limit(1).execute()
+
         # Check optional PostgreSQL pool (for LangGraph persistence)
         postgres_status = "active" if app.state.db_pool else "disabled"
-        
+
         system_health.set(1)  # P2 Observability
         return {
             "status": "healthy",
             "supabase": "connected",
             "postgres_pool": postgres_status,
-            "note": "Postgres pool is optional for persistence only"
+            "note": "Postgres pool is optional for persistence only",
         }
     except Exception as e:
         logger.error(f"Database health check failed: {str(e)}")
@@ -314,15 +327,15 @@ async def health_check_db():
             content={
                 "status": "unhealthy",
                 "database": "disconnected",
-                "error": str(e)
-            }
+                "error": str(e),
+            },
         )
 
 
 @app.get("/metrics")
 async def metrics():
     """Prometheus metrics endpoint.
-    
+
     P2 Observability: Expose all system metrics for scraping.
     """
     metrics_data, content_type = get_metrics()
@@ -342,26 +355,26 @@ async def chat(request: ChatRequest):
             for msg in request.conversation_history:
                 if msg.get("role") == "user":
                     messages.append(HumanMessage(content=msg["content"]))
-        
+
         # Add current message
         messages.append(HumanMessage(content=request.message))
-        
+
         # Get user context if available
         user_profile = None
         subscription_tier: Literal["free", "saving", "energy", "performance"] = "free"
         inventory = []
-        
+
         if request.user_id:
             # Parallelize Supabase calls for performance (P0 optimization)
             user_profile, tier, inventory = await asyncio.gather(
                 SupabaseClient.get_user_profile_async(request.user_id),
                 SupabaseClient.get_user_subscription_async(request.user_id),
-                SupabaseClient.get_user_inventory_async(request.user_id)
+                SupabaseClient.get_user_inventory_async(request.user_id),
             )
             # Validate subscription tier
             if tier in ("free", "saving", "energy", "performance"):
                 subscription_tier = tier
-        
+
         # Prepare initial state
         initial_state = {
             "messages": messages,
@@ -375,29 +388,29 @@ async def chat(request: ChatRequest):
         # Config for persistence
         thread_id = request.thread_id or request.user_id or "default_thread"
         config = {"configurable": {"thread_id": thread_id}}
-        
+
         # Invoke orchestrator with timeout (P0 reliability)
         try:
             result = await asyncio.wait_for(
                 app.state.orchestrator.ainvoke(initial_state, config=config),
-                timeout=120.0  # 2 minutes timeout for complex meal planning
+                timeout=120.0,  # 2 minutes timeout for complex meal planning
             )
         except asyncio.TimeoutError:
             logger.error(f"Orchestrator timeout after 120s for user {request.user_id}")
             raise MenuGreenException(
                 code=ErrorCode.INTERNAL_ERROR,
                 message="Request timed out. Please try again or simplify your request.",
-                details={"timeout": "120s"}
+                details={"timeout": "120s"},
             )
-        
+
         # Extract response
         ai_message = result["messages"][-1]
-        
+
         return ChatResponse(
             response=ai_message.content,
             intent=result.get("intent"),
         )
-        
+
     except MenuGreenException:
         # Re-raise custom exceptions to be handled by exception handler
         raise
@@ -407,7 +420,7 @@ async def chat(request: ChatRequest):
         raise MenuGreenException(
             code=ErrorCode.INTERNAL_ERROR,
             message="Failed to process chat request",
-            details={"error": str(e)}
+            details={"error": str(e)},
         )
 
 
@@ -417,6 +430,7 @@ async def chat_stream(request: ChatRequest):
     Streaming chat endpoint.
     Returns response as Server-Sent Events for real-time display with true LangGraph streaming.
     """
+
     async def generate():
         try:
             # Build conversation history
@@ -425,25 +439,27 @@ async def chat_stream(request: ChatRequest):
                 for msg in request.conversation_history:
                     if msg.get("role") == "user":
                         messages.append(HumanMessage(content=msg["content"]))
-            
+
             # Add current message
             messages.append(HumanMessage(content=request.message))
-            
+
             # Get user context if available
             user_profile = None
-            subscription_tier: Literal["free", "saving", "energy", "performance"] = "free"
+            subscription_tier: Literal["free", "saving", "energy", "performance"] = (
+                "free"
+            )
             inventory = []
-            
+
             if request.user_id:
                 # Parallelize Supabase calls for performance (P0 optimization)
                 user_profile, tier, inventory = await asyncio.gather(
                     SupabaseClient.get_user_profile_async(request.user_id),
                     SupabaseClient.get_user_subscription_async(request.user_id),
-                    SupabaseClient.get_user_inventory_async(request.user_id)
+                    SupabaseClient.get_user_inventory_async(request.user_id),
                 )
                 if tier in ("free", "saving", "energy", "performance"):
                     subscription_tier = tier
-            
+
             initial_state = {
                 "messages": messages,
                 "user_id": request.user_id,
@@ -452,7 +468,7 @@ async def chat_stream(request: ChatRequest):
                 "subscription_tier": subscription_tier,
                 "context": {"inventory": inventory},
             }
-            
+
             # Config for persistence
             thread_id = request.thread_id or request.user_id or "default_thread"
             config = {"configurable": {"thread_id": thread_id}}
@@ -460,14 +476,18 @@ async def chat_stream(request: ChatRequest):
             # True LangGraph streaming with astream() and timeout tracking (P0 reliability)
             timeout_seconds = 120.0
             start_time = asyncio.get_event_loop().time()
-            
-            async for event in app.state.orchestrator.astream(initial_state, config=config):
+
+            async for event in app.state.orchestrator.astream(
+                initial_state, config=config
+            ):
                 # Check timeout during streaming
                 if asyncio.get_event_loop().time() - start_time > timeout_seconds:
-                    logger.error(f"Orchestrator stream timeout after {timeout_seconds}s for user {request.user_id}")
+                    logger.error(
+                        f"Orchestrator stream timeout after {timeout_seconds}s for user {request.user_id}"
+                    )
                     yield f"data: {json.dumps({'error': f'Request timed out after {timeout_seconds}s', 'code': 'TIMEOUT'})}\n\n"
                     return
-                
+
                 # Event structure: {node_name: output_dict}
                 for node_name, node_output in event.items():
                     if "messages" in node_output:
@@ -475,19 +495,21 @@ async def chat_stream(request: ChatRequest):
                         new_messages = node_output["messages"]
                         if new_messages and len(new_messages) > 0:
                             last_msg = new_messages[-1]
-                            if hasattr(last_msg, 'content') and isinstance(last_msg.content, str):
+                            if hasattr(last_msg, "content") and isinstance(
+                                last_msg.content, str
+                            ):
                                 # Yield node progress
                                 yield f"data: {json.dumps({'node': node_name, 'content': last_msg.content})}\n\n"
-            
+
             yield f"data: {json.dumps({'done': True})}\n\n"
-            
+
         except MenuGreenException as e:
             logger.error(f"MenuGreenException in stream: {e.code} - {e.message}")
             yield f"data: {json.dumps({'error': e.message, 'code': e.code})}\n\n"
         except Exception as e:
             logger.exception(f"Unexpected error in stream: {str(e)}")
             yield f"data: {json.dumps({'error': 'An unexpected error occurred'})}\n\n"
-    
+
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",

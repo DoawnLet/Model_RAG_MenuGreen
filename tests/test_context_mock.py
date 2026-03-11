@@ -1,5 +1,4 @@
 import asyncio
-import sys
 from unittest.mock import MagicMock, AsyncMock, patch
 
 # Import dependencies we need to patch or use
