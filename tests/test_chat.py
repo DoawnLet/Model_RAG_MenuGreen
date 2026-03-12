@@ -5,7 +5,6 @@ Run tests against the Menu Green API to verify functionality
 
 import requests
 import json
-from typing import Dict, Any
 
 BASE_URL = "http://localhost:8000"
 
@@ -15,7 +14,7 @@ def print_response(test_name: str, response: requests.Response):
     print(f"TEST: {test_name}")
     print(f"{'='*60}")
     print(f"Status Code: {response.status_code}")
-    print(f"Response:")
+    print("Response:")
     try:
         print(json.dumps(response.json(), indent=2, ensure_ascii=False))
     except:
@@ -143,7 +142,7 @@ def test_10_db_health():
 def test_11_streaming():
     """Test streaming endpoint"""
     print(f"\n{'='*60}")
-    print(f"TEST: 11. Streaming Chat")
+    print("TEST: 11. Streaming Chat")
     print(f"{'='*60}")
     
     response = requests.post(

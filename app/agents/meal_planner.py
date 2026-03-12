@@ -8,9 +8,9 @@ Pipeline:
 4. recipe_adapter → Adapt recipes to Vietnamese
 5. validation_shopping → Validate & generate shopping list
 """
-from typing import Optional
+
 from datetime import date, timedelta
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 import json
 import asyncio
@@ -18,22 +18,21 @@ import logging
 
 from app.agents.state import AgentState
 from app.models.meal_plan import (
-    NutritionTargets,
     MealDistribution,
-    RecipeIngredient,
-    RecipeNutrition,
     AdaptedRecipe,
-    Meal,
     DailyMealPlan,
     ShoppingListItem,
     UserInfo,
-    UserInfo,
     MealPlanOutput,
     SearchQueries,
-    WeeklyMealPlanAllocation, 
-    DailyAllocation,
+    WeeklyMealPlanAllocation,
 )
-from app.agents.nutrition import calculate_bmr, calculate_tdee, calculate_target_calories, UserProfile
+from app.agents.nutrition import (
+    calculate_bmr,
+    calculate_tdee,
+    calculate_target_calories,
+    UserProfile,
+)
 from app.agents.rag_tool import RAGTool
 from app.core.supabase_client import SupabaseClient
 from app.core.config import get_settings
@@ -78,7 +77,7 @@ Bạn là chuyên gia dinh dưỡng của Menu Green. Nhiệm vụ: Xác định
 async def nutrition_analyzer_agent(state: AgentState) -> dict:
     """
     STEP 1: Phân tích profile và tính BMR/TDEE/Macros + meal distribution.
-    
+
     P1 Reliability: LLM calls with retry decorator.
     P2 Observability: Tracks execution time and LLM calls.
 
@@ -90,13 +89,20 @@ async def nutrition_analyzer_agent(state: AgentState) -> dict:
     """
     from app.core.retry_utils import with_retry
     from app.core.metrics import track_llm_call
+
     try:
         profile_data = state.get("user_profile")
 
         if not profile_data:
             return {
-                "validation_errors": ["Chưa có hồ sơ sức khỏe. Vui lòng cập nhật profile trước khi tạo meal plan."],
-                "messages": [AIMessage(content="❌ Thiếu hồ sơ người dùng. Vui lòng cập nhật thông tin cá nhân.")]
+                "validation_errors": [
+                    "Chưa có hồ sơ sức khỏe. Vui lòng cập nhật profile trước khi tạo meal plan."
+                ],
+                "messages": [
+                    AIMessage(
+                        content="❌ Thiếu hồ sơ người dùng. Vui lòng cập nhật thông tin cá nhân."
+                    )
+                ],
             }
 
         # Calculate nutrition metrics
@@ -138,16 +144,18 @@ async def nutrition_analyzer_agent(state: AgentState) -> dict:
 
         # Structured Output with retry (P1 Reliability)
         structured_llm = llm.with_structured_output(MealDistribution)
-        
+
         @with_retry(max_attempts=3, base_delay=1.0)
-        @track_llm_call(model=settings.llm_model, agent="nutrition_analyzer")  # P2 Observability
+        @track_llm_call(
+            model=settings.llm_model, agent="nutrition_analyzer"
+        )  # P2 Observability
         async def _get_distribution() -> MealDistribution:
             result = await structured_llm.ainvoke(prompt)
             # Cast to correct type (with_structured_output returns dict | BaseModel)
             return result  # type: ignore[return-value]
-        
+
         distribution_data: MealDistribution = await _get_distribution()
-        
+
         # Convert to dict for storage if needed, or keep as model.
         # But downstream expects dict access like ['breakfast_percent'].
         # Let's convert to dict to be safe with existing code structure or update downstream.
@@ -158,29 +166,31 @@ async def nutrition_analyzer_agent(state: AgentState) -> dict:
             "protein_g": protein_g,
             "carbs_g": carbs_g,
             "fat_g": fat_g,
-            "meal_distribution": distribution_data.model_dump()
+            "meal_distribution": distribution_data.model_dump(),
         }
 
         logger.info(f"✅ Nutrition analysis complete: {target_cals} kcal/day")
 
         return {
             "nutrition_targets": nutrition_targets,
-            "messages": [AIMessage(
-                content=f"✅Step 1/5: Đã phân tích dinh dưỡng\n"
-                        f"- Calo/ngày: {target_cals:.0f} kcal\n"
-                        f"- Protein: {protein_g:.0f}g | Carbs: {carbs_g:.0f}g | Fat: {fat_g:.0f}g\n"
-                        f"- Phân bổ: Sáng {distribution_data.breakfast_percent*100:.0f}%, "
-                        f"Trưa {distribution_data.lunch_percent*100:.0f}%, "
-                        f"Tối {distribution_data.dinner_percent*100:.0f}%, "
-                        f"Phụ {distribution_data.snack_percent*100:.0f}%"
-            )]
+            "messages": [
+                AIMessage(
+                    content=f"✅Step 1/5: Đã phân tích dinh dưỡng\n"
+                    f"- Calo/ngày: {target_cals:.0f} kcal\n"
+                    f"- Protein: {protein_g:.0f}g | Carbs: {carbs_g:.0f}g | Fat: {fat_g:.0f}g\n"
+                    f"- Phân bổ: Sáng {distribution_data.breakfast_percent * 100:.0f}%, "
+                    f"Trưa {distribution_data.lunch_percent * 100:.0f}%, "
+                    f"Tối {distribution_data.dinner_percent * 100:.0f}%, "
+                    f"Phụ {distribution_data.snack_percent * 100:.0f}%"
+                )
+            ],
         }
 
     except Exception as e:
         logger.error(f"Nutrition analyzer failed: {str(e)}")
         return {
             "validation_errors": [f"Lỗi tính toán dinh dưỡng: {str(e)}"],
-            "messages": [AIMessage(content=f"❌ Lỗi Step 1: {str(e)}")]
+            "messages": [AIMessage(content=f"❌ Lỗi Step 1: {str(e)}")],
         }
 
 
@@ -223,14 +233,16 @@ async def recipe_retriever_agent(state: AgentState) -> dict:
     try:
         profile = state.get("user_profile", {})
         targets = state.get("nutrition_targets")
-        inventory = state.get("context", {}).get("inventory", [])
+        state.get("context", {}).get("inventory", [])
 
         if not targets:
             return {
                 "validation_errors": ["Missing nutrition targets from Step 1"],
-                "messages": [AIMessage(content="❌ Thiếu thông tin dinh dưỡng từ Step 1")]
+                "messages": [
+                    AIMessage(content="❌ Thiếu thông tin dinh dưỡng từ Step 1")
+                ],
             }
-        
+
         if not profile:
             profile = {}
 
@@ -251,7 +263,7 @@ async def recipe_retriever_agent(state: AgentState) -> dict:
             goal=goal,
             dietary_prefs=", ".join(dietary) if dietary else "Không hạn chế",
             allergies=", ".join(allergies) if allergies else "Không có",
-            activity_level=activity
+            activity_level=activity,
         )
 
         # Structured Output
@@ -291,29 +303,37 @@ async def recipe_retriever_agent(state: AgentState) -> dict:
         if not unique_recipes:
             return {
                 "validation_errors": ["Không tìm thấy recipes phù hợp"],
-                "messages": [AIMessage(content="❌ Không tìm thấy món ăn nào phù hợp. Vui lòng thử lại hoặc điều chỉnh dietary preferences.")]
+                "messages": [
+                    AIMessage(
+                        content="❌ Không tìm thấy món ăn nào phù hợp. Vui lòng thử lại hoặc điều chỉnh dietary preferences."
+                    )
+                ],
             }
 
         recipe_ids = [r.id for r in unique_recipes[:30]]  # Limit to 30
-        full_recipes = client.table("recipes") \
-            .select("*, recipe_ingredients(*, ingredients(*))") \
-            .in_("id", recipe_ids) \
+        full_recipes = (
+            client.table("recipes")
+            .select("*, recipe_ingredients(*, ingredients(*))")
+            .in_("id", recipe_ids)
             .execute()
+        )
 
         logger.info(f"✅ Found {len(full_recipes.data)} candidate recipes")
 
         return {
             "candidate_recipes": full_recipes.data,
-            "messages": [AIMessage(
-                content=f"✅ Step 2/5: Đã tìm thấy {len(full_recipes.data)} công thức phù hợp từ database"
-            )]
+            "messages": [
+                AIMessage(
+                    content=f"✅ Step 2/5: Đã tìm thấy {len(full_recipes.data)} công thức phù hợp từ database"
+                )
+            ],
         }
 
     except Exception as e:
         logger.error(f"Recipe retriever failed: {str(e)}")
         return {
             "validation_errors": [f"Lỗi tìm kiếm recipes: {str(e)}"],
-            "messages": [AIMessage(content=f"❌ Lỗi Step 2: {str(e)}")]
+            "messages": [AIMessage(content=f"❌ Lỗi Step 2: {str(e)}")],
         }
 
 
@@ -369,13 +389,13 @@ async def meal_planner_agent(state: AgentState) -> dict:
         if not recipes:
             return {
                 "validation_errors": ["No candidate recipes from Step 2"],
-                "messages": [AIMessage(content="❌ Không có recipes từ Step 2")]
+                "messages": [AIMessage(content="❌ Không có recipes từ Step 2")],
             }
-        
+
         if not targets:
             return {
                 "validation_errors": ["Missing nutrition targets"],
-                "messages": [AIMessage(content="❌ Thiếu thông tin dinh dưỡng")]
+                "messages": [AIMessage(content="❌ Thiếu thông tin dinh dưỡng")],
             }
 
         # Prepare recipe summary for LLM
@@ -392,15 +412,19 @@ async def meal_planner_agent(state: AgentState) -> dict:
                 total_cals += (amount / 100) * cals_per_100g
                 total_protein += (amount / 100) * protein_per_100g
 
-            prep_time = (r.get("prep_time_minutes", 0) or 0) + (r.get("cook_time_minutes", 0) or 0)
+            prep_time = (r.get("prep_time_minutes", 0) or 0) + (
+                r.get("cook_time_minutes", 0) or 0
+            )
 
-            recipe_summary.append({
-                "id": r["id"],
-                "name": r["name"],
-                "calories": round(total_cals),
-                "protein": round(total_protein),
-                "prep_time": prep_time
-            })
+            recipe_summary.append(
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "calories": round(total_cals),
+                    "protein": round(total_protein),
+                    "prep_time": prep_time,
+                }
+            )
 
         # Call LLM for optimization
         settings = get_settings()
@@ -419,7 +443,7 @@ async def meal_planner_agent(state: AgentState) -> dict:
             snack_calo=targets["daily_calories"] * dist["snack_percent"],
             protein_g=targets["protein_g"],
             num_recipes=len(recipe_summary),
-            recipe_list=json.dumps(recipe_summary, ensure_ascii=False, indent=2)
+            recipe_list=json.dumps(recipe_summary, ensure_ascii=False, indent=2),
         )
 
         # Structured Output
@@ -427,26 +451,26 @@ async def meal_planner_agent(state: AgentState) -> dict:
         result = await structured_llm.ainvoke(prompt)
         # Cast to correct type (with_structured_output returns dict | BaseModel)
         plan_result: WeeklyMealPlanAllocation = result  # type: ignore[assignment]
-        
+
         # Convert to dictionary format expected by downstream agent (day_1, day_2 keys)
         allocation = {}
         for idx, day_alloc in enumerate(plan_result.allocations, 1):
-             allocation[f"day_{idx}"] = day_alloc.model_dump()
+            allocation[f"day_{idx}"] = day_alloc.model_dump()
 
         logger.info("✅ Meal allocation complete for 7 days")
 
         return {
             "meal_plan_draft": allocation,
-            "messages": [AIMessage(
-                content="✅ Step 3/5: Đã phân bổ thực đơn 7 ngày (28 bữa)"
-            )]
+            "messages": [
+                AIMessage(content="✅ Step 3/5: Đã phân bổ thực đơn 7 ngày (28 bữa)")
+            ],
         }
 
     except Exception as e:
         logger.error(f"Meal planner failed: {str(e)}")
         return {
             "validation_errors": [f"Lỗi optimization: {str(e)}"],
-            "messages": [AIMessage(content=f"❌ Lỗi Step 3: {str(e)}")]
+            "messages": [AIMessage(content=f"❌ Lỗi Step 3: {str(e)}")],
         }
 
 
@@ -508,15 +532,15 @@ async def recipe_adapter_agent(state: AgentState) -> dict:
         if not draft:
             return {
                 "validation_errors": ["Missing meal plan draft from Step 3"],
-                "messages": [AIMessage(content="❌ Không có draft plan từ Step 3")]
+                "messages": [AIMessage(content="❌ Không có draft plan từ Step 3")],
             }
-        
+
         if not targets:
             return {
                 "validation_errors": ["Missing nutrition targets"],
-                "messages": [AIMessage(content="❌ Thiếu thông tin dinh dưỡng")]
+                "messages": [AIMessage(content="❌ Thiếu thông tin dinh dưỡng")],
             }
-        
+
         if not profile:
             profile = {}
 
@@ -552,7 +576,9 @@ async def recipe_adapter_agent(state: AgentState) -> dict:
 
                 recipe_data = next((r for r in recipes if r["id"] == recipe_id), None)
                 if not recipe_data:
-                    logger.warning(f"Recipe ID {recipe_id} not found for day {day_num} {meal_type}")
+                    logger.warning(
+                        f"Recipe ID {recipe_id} not found for day {day_num} {meal_type}"
+                    )
                     continue
 
                 # Calculate target for this meal
@@ -570,31 +596,36 @@ async def recipe_adapter_agent(state: AgentState) -> dict:
 
                 prompt = RECIPE_ADAPTER_PROMPT.format(
                     name=recipe_data["name"],
-                    prep_time=(recipe_data.get("prep_time_minutes", 0) or 0) +
-                             (recipe_data.get("cook_time_minutes", 0) or 0),
+                    prep_time=(recipe_data.get("prep_time_minutes", 0) or 0)
+                    + (recipe_data.get("cook_time_minutes", 0) or 0),
                     ingredients=ingredients_str,
                     instructions=recipe_data.get("instructions", "Không có hướng dẫn"),
                     target_calo=target_calo,
                     meal_type=meal_type,
                     allergies=", ".join(allergies) if allergies else "Không có",
-                    inventory_items=", ".join(list(inventory_names)[:10]) if inventory_names else "Không có"
+                    inventory_items=", ".join(list(inventory_names)[:10])
+                    if inventory_names
+                    else "Không có",
                 )
 
                 # Structured Output with retry (P1 Reliability + P1 Performance)
                 structured_llm = llm.with_structured_output(AdaptedRecipe)
-                
+
                 # Wrap with retry decorator for reliability
                 from app.core.retry_utils import with_retry
+
                 @with_retry(max_attempts=2, base_delay=1.0)
                 async def _adapt_recipe():
                     return await structured_llm.ainvoke(prompt)
-                
+
                 # Create async task
                 adaptation_tasks.append(_adapt_recipe())
                 task_metadata.append((day_num, meal_type))
 
         # Execute all adaptations in parallel (P1 Performance - Already optimized!)
-        logger.info(f"🚀 Adapting {len(adaptation_tasks)} recipes in parallel with retry protection...")
+        logger.info(
+            f"🚀 Adapting {len(adaptation_tasks)} recipes in parallel with retry protection..."
+        )
         responses = await asyncio.gather(*adaptation_tasks, return_exceptions=True)
 
         # Build days structure
@@ -602,13 +633,17 @@ async def recipe_adapter_agent(state: AgentState) -> dict:
         for (day_num, meal_type), response in zip(task_metadata, responses):
             # Skip exceptions - type guard
             if isinstance(response, Exception):
-                logger.error(f"Adaptation failed for day {day_num} {meal_type}: {response}")
+                logger.error(
+                    f"Adaptation failed for day {day_num} {meal_type}: {response}"
+                )
                 continue
-            
+
             # Response is now AdaptedRecipe object (or should be)
             if not isinstance(response, AdaptedRecipe):
-                 logger.error(f"Invalid response type for day {day_num} {meal_type}: {type(response)}")
-                 continue
+                logger.error(
+                    f"Invalid response type for day {day_num} {meal_type}: {type(response)}"
+                )
+                continue
 
             try:
                 adapted_json = response.model_dump()
@@ -626,16 +661,17 @@ async def recipe_adapter_agent(state: AgentState) -> dict:
                     "breakfast": "sáng",
                     "lunch": "trưa",
                     "dinner": "tối",
-                    "snack": "phụ"
+                    "snack": "phụ",
                 }[meal_type]
 
-                adapted_days[day_num].append({
-                    "loai": meal_type_vn,
-                    "mon_an": adapted_json
-                })
+                adapted_days[day_num].append(
+                    {"loai": meal_type_vn, "mon_an": adapted_json}
+                )
 
             except Exception as e:
-                logger.error(f"Failed to parse adaptation for day {day_num} {meal_type}: {e}")
+                logger.error(
+                    f"Failed to parse adaptation for day {day_num} {meal_type}: {e}"
+                )
                 continue
 
         # Build final structure
@@ -648,33 +684,40 @@ async def recipe_adapter_agent(state: AgentState) -> dict:
             daily_meals = adapted_days[day_num]
             total_calo = sum(m["mon_an"]["dinh_duong"]["calories"] for m in daily_meals)
 
-            final_days.append({
-                "ngay": day_num,
-                "ngay_thuc": (date.today() + timedelta(days=day_num - 1)).isoformat(),
-                "tong_calo": total_calo,
-                "buoi_an": daily_meals
-            })
+            final_days.append(
+                {
+                    "ngay": day_num,
+                    "ngay_thuc": (
+                        date.today() + timedelta(days=day_num - 1)
+                    ).isoformat(),
+                    "tong_calo": total_calo,
+                    "buoi_an": daily_meals,
+                }
+            )
 
         logger.info(f"✅ Adapted {len(final_days)} days successfully")
 
         return {
             "final_meal_plan": {"thuc_don_7_ngay": final_days},
-            "messages": [AIMessage(
-                content=f"✅ Step 4/5: Đã adapt {len(final_days)} ngày thực đơn chi tiết"
-            )]
+            "messages": [
+                AIMessage(
+                    content=f"✅ Step 4/5: Đã adapt {len(final_days)} ngày thực đơn chi tiết"
+                )
+            ],
         }
 
     except Exception as e:
         logger.error(f"Recipe adapter failed: {str(e)}")
         return {
             "validation_errors": [f"Lỗi adaptation: {str(e)}"],
-            "messages": [AIMessage(content=f"❌ Lỗi Step 4: {str(e)}")]
+            "messages": [AIMessage(content=f"❌ Lỗi Step 4: {str(e)}")],
         }
 
 
 # ============================================================================
 # STEP 5: VALIDATION & SHOPPING LIST AGENT
 # ============================================================================
+
 
 async def validation_shopping_agent(state: AgentState) -> dict:
     """
@@ -695,15 +738,15 @@ async def validation_shopping_agent(state: AgentState) -> dict:
         if not meal_plan:
             return {
                 "validation_errors": ["Missing final meal plan from Step 4"],
-                "messages": [AIMessage(content="❌ Không có meal plan từ Step 4")]
+                "messages": [AIMessage(content="❌ Không có meal plan từ Step 4")],
             }
-        
+
         if not targets:
             return {
                 "validation_errors": ["Missing nutrition targets"],
-                "messages": [AIMessage(content="❌ Thiếu thông tin dinh dưỡng")]
+                "messages": [AIMessage(content="❌ Thiếu thông tin dinh dưỡng")],
             }
-        
+
         if not profile:
             profile = {}
 
@@ -724,8 +767,7 @@ async def validation_shopping_agent(state: AgentState) -> dict:
 
             # Check protein distribution
             protein_meals = [
-                m for m in day["buoi_an"]
-                if m["mon_an"]["dinh_duong"]["protein_g"] > 15
+                m for m in day["buoi_an"] if m["mon_an"]["dinh_duong"]["protein_g"] > 15
             ]
             if len(protein_meals) < 3:
                 warnings.append(
@@ -753,7 +795,7 @@ async def validation_shopping_agent(state: AgentState) -> dict:
                         shopping_dict[name] = {
                             "amount": 0,
                             "unit": unit,
-                            "in_inventory": name.lower() in inventory_names
+                            "in_inventory": name.lower() in inventory_names,
                         }
                     shopping_dict[name]["amount"] += amount
 
@@ -762,7 +804,7 @@ async def validation_shopping_agent(state: AgentState) -> dict:
                 "ten_nguyen_lieu": name,
                 "so_luong": round(data["amount"], 1),
                 "don_vi": data["unit"],
-                "co_san_trong_kho": data["in_inventory"]
+                "co_san_trong_kho": data["in_inventory"],
             }
             for name, data in shopping_dict.items()
         ]
@@ -771,7 +813,7 @@ async def validation_shopping_agent(state: AgentState) -> dict:
         goal_map = {
             "lose_fat": "Giảm mỡ",
             "maintain": "Duy trì",
-            "gain_muscle": "Tăng cơ"
+            "gain_muscle": "Tăng cơ",
         }
 
         final_output = MealPlanOutput(
@@ -779,18 +821,24 @@ async def validation_shopping_agent(state: AgentState) -> dict:
                 ten=profile.get("name", "Người dùng"),
                 muc_tieu=goal_map.get(profile.get("goal", "maintain"), "Duy trì"),
                 calo_ngay=targets["daily_calories"],
-                protein_g=targets["protein_g"]
+                protein_g=targets["protein_g"],
             ),
             thuc_don_7_ngay=[DailyMealPlan(**day) for day in days],
             danh_sach_mua=[ShoppingListItem(**item) for item in shopping_list],
             ghi_chu=(
                 f"Thực đơn được tạo bởi Menu Green AI cho {len(days)} ngày. "
-                + (f"Có {len(warnings)} lưu ý cần xem xét." if warnings else "Thực đơn đã được tối ưu hoàn chỉnh!")
-            )
+                + (
+                    f"Có {len(warnings)} lưu ý cần xem xét."
+                    if warnings
+                    else "Thực đơn đã được tối ưu hoàn chỉnh!"
+                )
+            ),
         )
 
         # Return as formatted JSON string
-        json_output = json.dumps(final_output.model_dump(), indent=2, ensure_ascii=False)
+        json_output = json.dumps(
+            final_output.model_dump(), indent=2, ensure_ascii=False
+        )
 
         validation_msg = ""
         if warnings:
@@ -801,20 +849,22 @@ async def validation_shopping_agent(state: AgentState) -> dict:
         return {
             "final_meal_plan": final_output.model_dump(),
             "validation_errors": errors if errors else None,
-            "messages": [AIMessage(
-                content=f"✅ Step 5/5: Hoàn tất meal plan!\n\n"
-                        f"📊 Tổng quan:\n"
-                        f"- {len(days)} ngày thực đơn\n"
-                        f"- {len(shopping_list)} nguyên liệu cần mua\n"
-                        f"- {len([i for i in shopping_list if i['co_san_trong_kho']])} nguyên liệu đã có sẵn"
-                        f"{validation_msg}\n\n"
-                        f"```json\n{json_output}\n```"
-            )]
+            "messages": [
+                AIMessage(
+                    content=f"✅ Step 5/5: Hoàn tất meal plan!\n\n"
+                    f"📊 Tổng quan:\n"
+                    f"- {len(days)} ngày thực đơn\n"
+                    f"- {len(shopping_list)} nguyên liệu cần mua\n"
+                    f"- {len([i for i in shopping_list if i['co_san_trong_kho']])} nguyên liệu đã có sẵn"
+                    f"{validation_msg}\n\n"
+                    f"```json\n{json_output}\n```"
+                )
+            ],
         }
 
     except Exception as e:
         logger.error(f"Validation/shopping agent failed: {str(e)}")
         return {
             "validation_errors": [f"Lỗi validation: {str(e)}"],
-            "messages": [AIMessage(content=f"❌ Lỗi Step 5: {str(e)}")]
+            "messages": [AIMessage(content=f"❌ Lỗi Step 5: {str(e)}")],
         }

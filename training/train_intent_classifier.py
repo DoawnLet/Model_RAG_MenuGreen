@@ -14,7 +14,7 @@
 import json
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
@@ -63,7 +63,7 @@ LABEL_NAMES = [
     "unknown",         # 6
 ]
 
-print(f"\n📋 Config:")
+print("\n📋 Config:")
 for k, v in CONFIG.items():
     print(f"  {k}: {v}")
 
@@ -78,7 +78,7 @@ with open(CONFIG["dataset_path"], "r", encoding="utf-8") as f:
 train_data = data["train"]
 val_data = data["val"]
 
-print(f"\n📊 Dataset loaded:")
+print("\n📊 Dataset loaded:")
 print(f"  Train: {len(train_data)} samples")
 print(f"  Val:   {len(val_data)} samples")
 print(f"  Labels: {LABEL_NAMES}")

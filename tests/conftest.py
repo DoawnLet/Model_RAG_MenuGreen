@@ -1,8 +1,5 @@
 import pytest
 import asyncio
-import os
-from unittest.mock import MagicMock
-from app.core.config import Settings
 
 # Helper to mock settings if needed
 @pytest.fixture

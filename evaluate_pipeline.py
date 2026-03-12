@@ -2,7 +2,6 @@
 Evaluation Script for Menu Green Pipeline.
 Tests the "Office Worker / Raining" scenario.
 """
-import asyncio
 from app.core.matching import check_ingredients_match
 
 # Mock Data for Testing

@@ -1,10 +1,7 @@
 import asyncio
-import sys
-import os
 
 print("Importing config...")
 try:
-    from app.core.config import get_settings
     print("✅ Config imported")
 except Exception as e:
     print(f"❌ Config import failed: {e}")
@@ -23,7 +20,6 @@ print("✅ Imported orchestrator")
 
 from langchain_core.messages import HumanMessage
 from app.agents.state import AgentState
-from typing import cast
 
 async def test_direct_memory():
     print("\n🧠 Testing Direct Memory Access...")

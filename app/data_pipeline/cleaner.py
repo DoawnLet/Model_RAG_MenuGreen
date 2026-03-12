@@ -2,6 +2,7 @@
 LLM Data Cleaner - Converts raw recipe text to structured JSON.
 Uses GPT-4o-mini for cost-effective normalization.
 """
+
 import asyncio
 import json
 from typing import Optional
@@ -14,6 +15,7 @@ from app.data_pipeline.scraper import RawRecipe
 
 class CleanedRecipe(BaseModel):
     """Structured recipe ready for database insertion."""
+
     name: str
     description: str
     ingredients: list[str]
@@ -22,7 +24,9 @@ class CleanedRecipe(BaseModel):
     cook_time_minutes: Optional[int] = None
     servings: Optional[int] = None
     tags: list[str] = []
-    nutrients: Optional[dict] = None  # {"calories": X, "protein": Y, "carbs": Z, "fat": W}
+    nutrients: Optional[dict] = (
+        None  # {"calories": X, "protein": Y, "carbs": Z, "fat": W}
+    )
     vector_text: str  # Text optimized for embedding
 
 
@@ -69,23 +73,24 @@ class RecipeCleaner:
     """
     Uses LLM to clean and structure raw recipe data.
     """
-    
+
     def __init__(self):
         from langchain_google_genai import ChatGoogleGenerativeAI
+
         settings = get_settings()
         self.llm = ChatGoogleGenerativeAI(
             model=settings.llm_model,
             google_api_key=settings.google_api_key,
             temperature=0.3,
         )
-    
+
     async def clean_recipe(self, raw: RawRecipe) -> Optional[CleanedRecipe]:
         """
         Clean a single raw recipe using LLM.
-        
+
         Args:
             raw: RawRecipe from scraper
-            
+
         Returns:
             CleanedRecipe or None if failed
         """
@@ -94,24 +99,26 @@ class RecipeCleaner:
             raw_ingredients=raw.raw_ingredients,
             raw_instructions=raw.raw_instructions,
         )
-        
+
         try:
             # Gemini isn't strict on response_format="json_object" in langchain yet without structured output
             # But we can just ask for JSON in system prompt (already there).
             # We can use JsonOutputParser if we want to be fancy, but simple json.loads is fine for now.
-            
+
             from langchain_core.messages import SystemMessage, HumanMessage
-            
-            response = await self.llm.ainvoke([
-                SystemMessage(content="You output valid JSON only."),
-                HumanMessage(content=prompt),
-            ])
-            
+
+            response = await self.llm.ainvoke(
+                [
+                    SystemMessage(content="You output valid JSON only."),
+                    HumanMessage(content=prompt),
+                ]
+            )
+
             # Type guard for response.content
             if not isinstance(response.content, str):
                 print(f"❌ LLM returned non-string content for '{raw.title}'")
                 return None
-            
+
             # Clean up potential markdown code blocks ```json ... ```
             content = response.content.strip()
             if content.startswith("```json"):
@@ -119,31 +126,31 @@ class RecipeCleaner:
             if content.endswith("```"):
                 content = content[:-3]
             content = content.strip()
-            
+
             data = json.loads(content)
             return CleanedRecipe(**data)
-            
+
         except Exception as e:
             print(f"❌ Failed to clean recipe '{raw.title}': {e}")
             return None
-    
+
     async def clean_batch(
-        self, 
+        self,
         raw_recipes: list[RawRecipe],
         concurrency: int = 3,
     ) -> list[CleanedRecipe]:
         """
         Clean multiple recipes with controlled concurrency.
-        
+
         Args:
             raw_recipes: List of raw recipes
             concurrency: Max parallel API calls
-            
+
         Returns:
             List of cleaned recipes
         """
         semaphore = asyncio.Semaphore(concurrency)
-        
+
         async def clean_with_limit(raw: RawRecipe) -> Optional[CleanedRecipe]:
             async with semaphore:
                 print(f"🧹 Cleaning: {raw.title}...")
@@ -151,10 +158,10 @@ class RecipeCleaner:
                 if result:
                     print(f"   ✅ Done: {result.name}")
                 return result
-        
+
         tasks = [clean_with_limit(r) for r in raw_recipes]
         results = await asyncio.gather(*tasks)
-        
+
         return [r for r in results if r is not None]
 
 
@@ -162,23 +169,24 @@ class RecipeCleaner:
 # Full Pipeline: Clean -> Vectorize -> Store
 # ============================================================================
 
+
 async def process_and_store(cleaned_recipes: list[CleanedRecipe]):
     """
     Generate embeddings and store recipes in Supabase.
-    
+
     Args:
         cleaned_recipes: List of cleaned recipes to store
     """
     from app.core.supabase_client import SupabaseClient
-    
+
     client = SupabaseClient.get_client()
-    
+
     for recipe in cleaned_recipes:
         print(f"📦 Processing: {recipe.name}")
-        
+
         # Generate embedding from vector_text
         embedding = await SupabaseClient.create_embedding(recipe.vector_text)
-        
+
         # Prepare data for insertion
         data = {
             "name": recipe.name,
@@ -189,11 +197,13 @@ async def process_and_store(cleaned_recipes: list[CleanedRecipe]):
             "servings": recipe.servings,
             "embedding": embedding,
         }
-        
+
         # Upsert to avoid duplicates
         try:
-            existing = client.table("recipes").select("id").eq("name", recipe.name).execute()
-            
+            existing = (
+                client.table("recipes").select("id").eq("name", recipe.name).execute()
+            )
+
             if existing.data:
                 # Update existing
                 client.table("recipes").update(data).eq("name", recipe.name).execute()
@@ -202,10 +212,10 @@ async def process_and_store(cleaned_recipes: list[CleanedRecipe]):
                 # Insert new
                 client.table("recipes").insert(data).execute()
                 print(f"   ✅ Inserted: {recipe.name}")
-                
+
         except Exception as e:
             print(f"   ❌ Error storing {recipe.name}: {e}")
-    
+
     print(f"\n🎉 Processed {len(cleaned_recipes)} recipes!")
 
 
@@ -213,10 +223,11 @@ async def process_and_store(cleaned_recipes: list[CleanedRecipe]):
 # Demo
 # ============================================================================
 
+
 async def demo():
     """Demo the cleaning pipeline."""
     from app.data_pipeline.scraper import RawRecipe
-    
+
     # Simulate raw scraped data
     raw_samples = [
         RawRecipe(
@@ -249,11 +260,11 @@ async def demo():
             """,
         ),
     ]
-    
+
     # Clean with LLM
     cleaner = RecipeCleaner()
     cleaned = await cleaner.clean_batch(raw_samples)
-    
+
     for c in cleaned:
         print(f"\n📝 {c.name}")
         print(f"   Tags: {c.tags}")

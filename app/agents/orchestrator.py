@@ -3,19 +3,15 @@ LangGraph Orchestrator - The central brain of Menu Green.
 Implements a Hub-and-Spoke model for routing user requests to specialized agents.
 """
 
-
-from typing import Annotated, Literal, Optional, TypedDict
 from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from pydantic import BaseModel
 import re
 import logging
+from app.agents.state import AgentState
 
 from app.agents.nutrition import (
-    UserProfile, 
-    calculate_macros, 
+    UserProfile,
     get_nutrition_summary,
 )
 from app.agents.inventory import (
@@ -35,7 +31,7 @@ from app.agents.meal_planner import (
     validation_shopping_agent,
 )
 from app.agents.calorie_agent import calorie_lookup_agent
-from app.core.retry_utils import with_retry, safe_llm_call
+from app.core.retry_utils import with_retry
 
 
 logger = logging.getLogger(__name__)
@@ -44,9 +40,6 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # State Definition
 # ============================================================================
-
-from app.agents.state import AgentState
-
 
 
 # ============================================================================
@@ -96,8 +89,7 @@ Assistant: nutrition_calc
 """
 
 
-
-def classify_intent(state: AgentState) -> dict:
+async def classify_intent(state: AgentState) -> dict:
     """
     Classify user intent from the latest message.
 
@@ -109,7 +101,7 @@ def classify_intent(state: AgentState) -> dict:
     P1 Reliability: LLM calls wrapped with retry decorator.
     """
     from app.core.memory import get_memory_manager
-    from app.core.retry_utils import with_retry
+
     settings = get_settings()
 
     # --- MEMORY INJECTION ---
@@ -136,6 +128,7 @@ def classify_intent(state: AgentState) -> dict:
     # ── ONNX LOCAL CLASSIFIER (fast path) ──────────────────────────
     try:
         from app.core.intent_classifier_onnx import get_onnx_classifier
+
         onnx_classifier = get_onnx_classifier()
         if onnx_classifier is not None:
             intent = onnx_classifier.predict(message_content)
@@ -152,17 +145,13 @@ def classify_intent(state: AgentState) -> dict:
         temperature=0,
     )
 
-    from app.core.retry_utils import safe_llm_call
-    import asyncio
-
-    async def _classify():
-        return await llm.ainvoke([
-            {"role": "system", "content": INTENT_PROMPT},
-            {"role": "user", "content": message_content},
-        ])
-
     try:
-        response = asyncio.run(_classify())
+        response = await llm.ainvoke(
+            [
+                {"role": "system", "content": INTENT_PROMPT},
+                {"role": "user", "content": message_content},
+            ]
+        )
     except Exception as e:
         logger.error(f"Intent classification failed: {e}")
         return {"intent": "general"}
@@ -173,8 +162,16 @@ def classify_intent(state: AgentState) -> dict:
     intent = response.content.strip().lower()
 
     # Validate intent
-    valid_intents = ["recipe_search", "nutrition_calc", "inventory_check",
-                     "meal_plan", "calorie_lookup", "general", "web_browsing", "unknown"]
+    valid_intents = [
+        "recipe_search",
+        "nutrition_calc",
+        "inventory_check",
+        "meal_plan",
+        "calorie_lookup",
+        "general",
+        "web_browsing",
+        "unknown",
+    ]
     if intent not in valid_intents:
         valid_found = False
         for valid in valid_intents:
@@ -194,10 +191,33 @@ def classify_intent(state: AgentState) -> dict:
 
 TIER_PERMISSIONS = {
     "free": ["recipe_search", "general", "unknown", "web_browsing", "calorie_lookup"],
-    "saving": ["recipe_search", "general", "unknown", "inventory_check", "web_browsing", "calorie_lookup"],
-    "energy": ["recipe_search", "general", "unknown", "inventory_check", "meal_plan", "web_browsing", "calorie_lookup"],
-    "performance": ["recipe_search", "general", "unknown", "inventory_check",
-                    "meal_plan", "nutrition_calc", "web_browsing", "calorie_lookup"],
+    "saving": [
+        "recipe_search",
+        "general",
+        "unknown",
+        "inventory_check",
+        "web_browsing",
+        "calorie_lookup",
+    ],
+    "energy": [
+        "recipe_search",
+        "general",
+        "unknown",
+        "inventory_check",
+        "meal_plan",
+        "web_browsing",
+        "calorie_lookup",
+    ],
+    "performance": [
+        "recipe_search",
+        "general",
+        "unknown",
+        "inventory_check",
+        "meal_plan",
+        "nutrition_calc",
+        "web_browsing",
+        "calorie_lookup",
+    ],
 }
 
 
@@ -205,7 +225,7 @@ def check_permissions(state: AgentState) -> bool:
     """Check if user's subscription tier allows the detected intent."""
     tier = state.get("subscription_tier", "free")
     intent = state.get("intent", "general")
-    
+
     allowed = TIER_PERMISSIONS.get(tier, TIER_PERMISSIONS["free"])
     return intent in allowed
 
@@ -214,13 +234,14 @@ def check_permissions(state: AgentState) -> bool:
 # Agent Nodes
 # ============================================================================
 
+
 def nutrition_agent(state: AgentState) -> dict:
     """
     Handle nutrition calculation requests.
     Requires user profile data.
     """
     profile_data = state.get("user_profile")
-    
+
     if not profile_data:
         response = "❌ Chưa có thông tin hồ sơ sức khỏe. Vui lòng cập nhật hồ sơ trước."
     else:
@@ -229,7 +250,7 @@ def nutrition_agent(state: AgentState) -> dict:
             response = get_nutrition_summary(profile)
         except Exception as e:
             response = f"❌ Lỗi khi tính toán: {str(e)}"
-    
+
     return {"messages": [AIMessage(content=response)]}
 
 
@@ -241,14 +262,14 @@ def inventory_agent(state: AgentState) -> dict:
     # In production, fetch from Supabase
     # For now, return placeholder
     inventory_items = state.get("context", {}).get("inventory", [])
-    
+
     if not inventory_items:
         response = "📦 Kho nguyên liệu của bạn đang trống. Hãy thêm nguyên liệu!"
     else:
         items = [InventoryItem(**item) for item in inventory_items]
         status = check_expiry_status(items)
         response = format_inventory_alert(status)
-    
+
     return {"messages": [AIMessage(content=response)]}
 
 
@@ -276,7 +297,7 @@ async def recipe_agent(state: AgentState) -> dict:
         # Build context-aware search query from user profile
         search_query = message_content
         allergies = user_profile.get("allergies") or []
-        preferences = user_profile.get("dietary_preferences") or []
+        user_profile.get("dietary_preferences") or []
         goal = user_profile.get("goal", "")
 
         # Enrich query with user context
@@ -284,7 +305,11 @@ async def recipe_agent(state: AgentState) -> dict:
             ing_names = []
             for inv in inventory[:5]:  # top 5 ingredients
                 if isinstance(inv, dict):
-                    name = inv.get("ingredients", {}).get("name") if isinstance(inv.get("ingredients"), dict) else inv.get("name", "")
+                    name = (
+                        inv.get("ingredients", {}).get("name")
+                        if isinstance(inv.get("ingredients"), dict)
+                        else inv.get("name", "")
+                    )
                     if name:
                         ing_names.append(name)
             if ing_names:
@@ -301,11 +326,15 @@ async def recipe_agent(state: AgentState) -> dict:
         if allergies and recipes:
             filtered = []
             for r in recipes:
-                recipe_text = (r.get("name", "") + " " + str(r.get("description", ""))).lower()
+                recipe_text = (
+                    r.get("name", "") + " " + str(r.get("description", ""))
+                ).lower()
                 has_allergen = any(a.lower() in recipe_text for a in allergies)
                 if not has_allergen:
                     filtered.append(r)
-            recipes = filtered if filtered else recipes  # Keep all if everything filtered
+            recipes = (
+                filtered if filtered else recipes
+            )  # Keep all if everything filtered
 
         response = format_recipe_results(recipes)
 
@@ -337,31 +366,37 @@ async def web_browsing_agent(state: AgentState) -> dict:
     # Type guard: ensure content is string
     if not isinstance(last_message.content, str):
         return {"messages": [AIMessage(content="❌ Không thể xử lý tin nhắn này.")]}
-    
+
     message_content: str = last_message.content
-    
+
     # 1. Extract URL
     url_pattern = r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+[^\s]*"
     urls = re.findall(url_pattern, message_content)
-    
+
     if not urls:
-        return {"messages": [AIMessage(content="❌ Không tìm thấy đường dẫn (URL) hợp lệ trong tin nhắn.")]}
-    
-    url = urls[0] # Process the first URL found
-    
+        return {
+            "messages": [
+                AIMessage(
+                    content="❌ Không tìm thấy đường dẫn (URL) hợp lệ trong tin nhắn."
+                )
+            ]
+        }
+
+    url = urls[0]  # Process the first URL found
+
     # 2. Browse Content
     raw_content = await browse_url(url)
-    
+
     # 3. Process with LLM
     settings = get_settings()
     llm = ChatGoogleGenerativeAI(
         model=settings.llm_model,
         google_api_key=settings.google_api_key,
     )
-    
+
     # Limit content length to avoid context overflow (approx 10k chars)
-    truncated_content = raw_content[:20000] 
-    
+    truncated_content = raw_content[:20000]
+
     system_prompt = """
     Bạn là trợ lý nghiên cứu web. Nhiệm vụ của bạn là đọc nội dung Markdown từ trang web 
     và trả lời yêu cầu của người dùng dựa trên nội dung đó.
@@ -369,12 +404,17 @@ async def web_browsing_agent(state: AgentState) -> dict:
     Nếu là công thức nấu ăn, hãy tóm tắt theo format: Tên, Nguyên liệu, Cách làm.
     Nếu nội dung quá dài, hãy tóm tắt các ý chính.
     """
-    
-    response = await llm.ainvoke([
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Yêu cầu của người dùng: {message_content}\n\nNội dung trang web:\n{truncated_content}"}
-    ])
-    
+
+    response = await llm.ainvoke(
+        [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": f"Yêu cầu của người dùng: {message_content}\n\nNội dung trang web:\n{truncated_content}",
+            },
+        ]
+    )
+
     return {"messages": [AIMessage(content=response.content)]}
 
 
@@ -387,7 +427,7 @@ def general_agent(state: AgentState) -> dict:
         model=settings.llm_model,
         google_api_key=settings.google_api_key,
     )
-    
+
     system_message = """
     Bạn là trợ lý dinh dưỡng Menu Green. Trả lời ngắn gọn, thân thiện về 
     các câu hỏi liên quan đến sức khỏe và dinh dưỡng.
@@ -395,13 +435,20 @@ def general_agent(state: AgentState) -> dict:
     THÔNG TIN CÁ NHÂN (Ký ức):
     {state.get("memory", "")}
     """
-    
-    response = llm.invoke([
-        {"role": "system", "content": system_message},
-        *[{"role": "user" if isinstance(m, HumanMessage) else "assistant", 
-           "content": m.content} for m in state["messages"][-5:]]  # Last 5 messages
-    ])
-    
+
+    response = llm.invoke(
+        [
+            {"role": "system", "content": system_message},
+            *[
+                {
+                    "role": "user" if isinstance(m, HumanMessage) else "assistant",
+                    "content": m.content,
+                }
+                for m in state["messages"][-5:]
+            ],  # Last 5 messages
+        ]
+    )
+
     return {"messages": [AIMessage(content=response.content)]}
 
 
@@ -410,20 +457,19 @@ def permission_denied_agent(state: AgentState) -> dict:
     Handle requests that require higher subscription tier.
     """
     intent = state.get("intent") or "unknown"
-    tier = state.get("subscription_tier", "free")
-    
+    state.get("subscription_tier", "free")
+
     upgrade_messages = {
         "nutrition_calc": "🔒 Tính năng tính toán dinh dưỡng chính xác cần gói **Hiệu suất**.",
         "inventory_check": "🔒 Tính năng quản lý kho cần gói **Tiết kiệm** trở lên.",
         "meal_plan": "🔒 Tính năng lập kế hoạch bữa ăn cần gói **Năng lượng** trở lên.",
     }
-    
+
     response = upgrade_messages.get(
-        intent, 
-        "🔒 Tính năng này cần nâng cấp gói dịch vụ."
+        intent, "🔒 Tính năng này cần nâng cấp gói dịch vụ."
     )
     response += "\n\n💡 Nâng cấp ngay để trải nghiệm đầy đủ sức mạnh của Menu Green!"
-    
+
     return {"messages": [AIMessage(content=response)]}
 
 
@@ -432,17 +478,16 @@ def permission_denied_agent(state: AgentState) -> dict:
 # ============================================================================
 
 
-
 def save_memory_node(state: AgentState) -> dict:
     """
     Node to save the interaction to memory.
     """
     from app.core.memory import get_memory_manager
-    
+
     user_id = state.get("user_id") or "default_user"
     last_user_msg = None
     last_ai_msg = None
-    
+
     # Find last user and AI message
     for m in reversed(state["messages"]):
         if isinstance(m, HumanMessage) and not last_user_msg:
@@ -451,7 +496,7 @@ def save_memory_node(state: AgentState) -> dict:
             last_ai_msg = m.content
         if last_user_msg and last_ai_msg:
             break
-            
+
     if last_user_msg and last_ai_msg:
         try:
             memory_manager = get_memory_manager()
@@ -461,12 +506,14 @@ def save_memory_node(state: AgentState) -> dict:
             logger.info(f"💾 Memory saved for user {user_id}")
         except Exception as e:
             logger.error(f"❌ Failed to save memory: {e}")
-            
-    return {} # Does not modify state keys
+
+    return {}  # Does not modify state keys
+
 
 # ============================================================================
 # Router Logic
 # ============================================================================
+
 
 def route_by_intent(state: AgentState) -> str:
     """
@@ -474,9 +521,9 @@ def route_by_intent(state: AgentState) -> str:
     """
     if not check_permissions(state):
         return "permission_denied"
-    
+
     intent = state.get("intent") or "general"
-    
+
     routes = {
         "recipe_search": "recipe",
         "web_browsing": "web_browsing",
@@ -495,33 +542,34 @@ def route_by_intent(state: AgentState) -> str:
 # Meal Planning Subgraph
 # ============================================================================
 
+
 def create_meal_plan_subgraph():
     """
     Create 5-step meal planning subgraph.
-    
+
     Pipeline:
-    nutrition_analyzer → recipe_retriever → meal_planner 
+    nutrition_analyzer → recipe_retriever → meal_planner
     → recipe_adapter → validation_shopping → END
     """
     subgraph = StateGraph(AgentState)
-    
+
     # Add 5 agent nodes
     subgraph.add_node("nutrition_analyzer", nutrition_analyzer_agent)
     subgraph.add_node("recipe_retriever", recipe_retriever_agent)
     subgraph.add_node("meal_planner", meal_planner_agent)
     subgraph.add_node("recipe_adapter", recipe_adapter_agent)
     subgraph.add_node("validation_shopping", validation_shopping_agent)
-    
+
     # Set entry point
     subgraph.set_entry_point("nutrition_analyzer")
-    
+
     # Sequential pipeline edges
     subgraph.add_edge("nutrition_analyzer", "recipe_retriever")
     subgraph.add_edge("recipe_retriever", "meal_planner")
     subgraph.add_edge("meal_planner", "recipe_adapter")
     subgraph.add_edge("recipe_adapter", "validation_shopping")
     subgraph.add_edge("validation_shopping", END)
-    
+
     return subgraph.compile()
 
 
@@ -529,12 +577,13 @@ def create_meal_plan_subgraph():
 # Graph Construction
 # ============================================================================
 
+
 def create_orchestrator(checkpointer=None):
     """
     Build the LangGraph orchestrator.
-    
+
     Graph Structure:
-    
+
     [START] -> [classify_intent] -> [route_by_intent] -> [agent_node] -> [END]
                                          |
                                          v
@@ -542,7 +591,7 @@ def create_orchestrator(checkpointer=None):
     """
     # Initialize graph
     workflow = StateGraph(AgentState)
-    
+
     # Add nodes
     workflow.add_node("classify_intent", classify_intent)
     workflow.add_node("nutrition", nutrition_agent)
@@ -554,10 +603,10 @@ def create_orchestrator(checkpointer=None):
     workflow.add_node("permission_denied", permission_denied_agent)
     workflow.add_node("meal_plan_workflow", create_meal_plan_subgraph())
     workflow.add_node("save_memory", save_memory_node)
-    
+
     # Set entry point
     workflow.set_entry_point("classify_intent")
-    
+
     # Add conditional edges from classifier
     workflow.add_conditional_edges(
         "classify_intent",
@@ -571,9 +620,9 @@ def create_orchestrator(checkpointer=None):
             "meal_plan_workflow": "meal_plan_workflow",
             "general": "general",
             "permission_denied": "permission_denied",
-        }
+        },
     )
-    
+
     # All agents end the conversation turn
     # All agents go to save_memory instead of END
     workflow.add_edge("nutrition", "save_memory")
@@ -583,13 +632,13 @@ def create_orchestrator(checkpointer=None):
     workflow.add_edge("web_browsing", "save_memory")
     workflow.add_edge("general", "save_memory")
     workflow.add_edge("meal_plan_workflow", "save_memory")
-    
+
     # Permission denied usually doesn't need memory saving, but can link if needed
     workflow.add_edge("permission_denied", END)
-    
+
     # Save memory ends the flow
     workflow.add_edge("save_memory", END)
-    
+
     return workflow.compile(checkpointer=checkpointer)
 
 
@@ -599,6 +648,7 @@ def get_compiled_graph(checkpointer=None):
     """Factory to get the compiled graph, optionally with persistence."""
     workflow = create_orchestrator(checkpointer)
     return workflow
+
 
 # Create default instance
 orchestrator = create_orchestrator()

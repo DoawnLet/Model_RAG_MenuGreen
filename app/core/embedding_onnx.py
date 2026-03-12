@@ -11,9 +11,7 @@ Sử dụng:
 """
 
 import logging
-import os
 import numpy as np
-from typing import Optional
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -65,10 +63,10 @@ def _mean_pooling(model_output, attention_mask) -> np.ndarray:
     """Mean pooling để lấy sentence embedding từ token embeddings."""
     # model_output là numpy array [batch, seq_len, hidden_size]
     token_embeddings = model_output[0]  # First element = token embeddings
-    
+
     # Expand attention mask
     mask = np.expand_dims(attention_mask, axis=-1).astype(np.float32)
-    
+
     # Apply mask và tính mean
     sum_embeddings = np.sum(token_embeddings * mask, axis=1)
     sum_mask = np.clip(np.sum(mask, axis=1), a_min=1e-9, a_max=None)
@@ -84,11 +82,11 @@ def _normalize(v: np.ndarray) -> np.ndarray:
 def embed_text_onnx(text: str) -> list[float]:
     """
     Tạo embedding vector bằng ONNX (đồng bộ).
-    
+
     Returns:
         List of floats (1024D cho BGE-M3)
     """
-    if not _load_model():
+    if not _load_model() or _tokenizer is None or _model is None:
         raise RuntimeError("ONNX model not available")
 
     inputs = _tokenizer(
@@ -127,4 +125,5 @@ async def get_embedding(text: str) -> list[float]:
 
     # Fallback to Gemini
     from app.core.supabase_client import SupabaseClient
+
     return await SupabaseClient.create_embedding_gemini(text)

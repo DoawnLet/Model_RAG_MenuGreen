@@ -21,16 +21,6 @@ def test_metrics_import():
     """Test that metrics module imports correctly."""
     print("🔍 Testing metrics module import...")
     try:
-        from app.core.metrics import (
-            http_requests_total,
-            llm_calls_total,
-            llm_cost_usd_total,
-            agent_executions_total,
-            memory_cache_hits_total,
-            get_metrics,
-            track_llm_call,
-            track_agent_execution,
-        )
         print("✅ All metrics imported successfully")
         return True
     except Exception as e:

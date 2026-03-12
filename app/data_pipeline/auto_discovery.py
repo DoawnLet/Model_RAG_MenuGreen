@@ -12,6 +12,7 @@ Usage:
     agent = AutoDiscoveryAgent()
     result = await agent.run(max_recipes=10)
 """
+
 import asyncio
 import logging
 import re
@@ -119,6 +120,7 @@ Nếu trang web KHÔNG chứa công thức nấu ăn, trả về: {{"error": "no
 # Auto-Discovery Agent
 # ============================================================================
 
+
 class AutoDiscoveryAgent:
     """
     Agent tự động khám phá và cào công thức nấu ăn từ các website Việt Nam.
@@ -134,7 +136,7 @@ class AutoDiscoveryAgent:
     ):
         """
         Args:
-            sites: Danh sách site keys (ví dụ: ["cooky", "savoury"]). 
+            sites: Danh sách site keys (ví dụ: ["cooky", "savoury"]).
                    None = tất cả.
             delay_seconds: Thời gian chờ giữa các request.
             max_recipes_per_run: Số công thức tối đa mỗi lần chạy.
@@ -198,7 +200,9 @@ class AutoDiscoveryAgent:
                         print("👉 Thêm vào .env: JINA_API_KEY=jina_...")
                         return []
                     elif response.status_code != 200:
-                        print(f"   ⚠️ Jina trả về {response.status_code}, bỏ qua query này.")
+                        print(
+                            f"   ⚠️ Jina trả về {response.status_code}, bỏ qua query này."
+                        )
                         break  # Don't retry on non-timeout HTTP errors
 
                     # Parse response (JSON or Markdown)
@@ -217,9 +221,7 @@ class AutoDiscoveryAgent:
                         print(f"   ✅ JSON parsed, found URLs so far: {len(all_urls)}")
                     except (json.JSONDecodeError, TypeError):
                         # Fallback: extract URLs from Markdown/text response
-                        found_urls = re.findall(
-                            r"https?://[^\s\)\]\"']+", content
-                        )
+                        found_urls = re.findall(r"https?://[^\s\)\]\"']+", content)
                         for url in found_urls:
                             if re.search(url_pattern, url):
                                 clean_url = re.sub(r"[),.\]]+$", "", url)
@@ -229,7 +231,11 @@ class AutoDiscoveryAgent:
                     await asyncio.sleep(self.delay)
                     break  # Success, no need to retry
 
-                except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.TimeoutException) as e:
+                except (
+                    httpx.ReadTimeout,
+                    httpx.ConnectTimeout,
+                    httpx.TimeoutException,
+                ) as e:
                     wait_time = (attempt + 1) * 5
                     print(f"   ⏱️ Timeout ({type(e).__name__}). ", end="")
                     if attempt < max_retries:
@@ -281,7 +287,9 @@ class AutoDiscoveryAgent:
     # ------------------------------------------------------------------
     # Step 3: Extract structured recipe via LLM
     # ------------------------------------------------------------------
-    async def extract_recipe(self, content: str, source_url: str) -> Optional[CleanedRecipe | str]:
+    async def extract_recipe(
+        self, content: str, source_url: str
+    ) -> Optional[CleanedRecipe | str]:
         """
         Sử dụng Gemini để trích xuất thông tin công thức từ Markdown.
 
@@ -306,10 +314,12 @@ class AutoDiscoveryAgent:
         prompt = EXTRACTION_PROMPT.format(content=content)
 
         try:
-            response = await llm.ainvoke([
-                SystemMessage(content="You output valid JSON only."),
-                HumanMessage(content=prompt),
-            ])
+            response = await llm.ainvoke(
+                [
+                    SystemMessage(content="You output valid JSON only."),
+                    HumanMessage(content=prompt),
+                ]
+            )
 
             if not isinstance(response.content, str):
                 logger.error(f"LLM trả về non-string cho {source_url}")
@@ -329,7 +339,7 @@ class AutoDiscoveryAgent:
 
             # Check if it's a valid recipe (not an error response)
             if "error" in data:
-                print(f"   ⏭️ Không phải trang công thức, bỏ qua.")
+                print("   ⏭️ Không phải trang công thức, bỏ qua.")
                 return "SKIP"  # Sentinel value to indicate skip (not an error)
 
             # Build vector_text if missing
@@ -403,13 +413,13 @@ class AutoDiscoveryAgent:
         max_count = max_recipes or self.max_recipes
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"🤖 AUTO-DISCOVERY AGENT — {timestamp}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"📌 Sites: {', '.join(self.sites)}")
         print(f"📌 Max recipes: {max_count}")
         print(f"📌 Dry run: {'YES' if dry_run else 'NO'}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         stats = {
             "links_found": 0,
@@ -460,7 +470,7 @@ class AutoDiscoveryAgent:
                 print(f"\n✅ Đã đạt giới hạn {max_count} công thức. Dừng.")
                 break
 
-            print(f"\n--- [{i+1}/{len(filtered_urls)}] {url[:70]}...")
+            print(f"\n--- [{i + 1}/{len(filtered_urls)}] {url[:70]}...")
 
             # Crawl
             content = await self.crawl_recipe(url)
@@ -486,7 +496,7 @@ class AutoDiscoveryAgent:
             # Dedup
             if await self.is_duplicate(recipe.name):
                 stats["duplicates"] += 1
-                print(f"   ⏭️ Trùng lặp, bỏ qua.")
+                print("   ⏭️ Trùng lặp, bỏ qua.")
                 continue
 
             # Store (or dry-run)
@@ -509,9 +519,9 @@ class AutoDiscoveryAgent:
             await asyncio.sleep(self.delay)
 
         # Summary
-        print(f"\n{'='*60}")
-        print(f"📊 KẾT QUẢ AUTO-DISCOVERY")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("📊 KẾT QUẢ AUTO-DISCOVERY")
+        print(f"{'=' * 60}")
         print(f"   🔗 Link tìm thấy:     {stats['links_found']}")
         print(f"   🔽 Lọc bỏ (non-recipe):{stats['skipped']}")
         print(f"   📄 Crawl thành công:   {stats['crawled']}")
@@ -519,6 +529,6 @@ class AutoDiscoveryAgent:
         print(f"   ⏭️  Trùng lặp:          {stats['duplicates']}")
         print(f"   ✅ Đã lưu mới:         {stats['stored']}")
         print(f"   ❌ Lỗi:                {stats['errors']}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         return stats
