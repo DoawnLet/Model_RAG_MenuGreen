@@ -59,9 +59,9 @@ class MemoryManager:
     def get_memories(self, user_id: str, query: Optional[str] = None):
         """Retrieve relevant memories."""
         if query:
-            return self.memory.search(query, user_id=user_id)
+            return self.memory.search(query, filters={"user_id": user_id})
         else:
-            return self.memory.get_all(user_id=user_id)
+            return self.memory.get_all(filters={"user_id": user_id})
 
     def get_formatted_context(self, user_id: str, query: str) -> str:
         """Get memories formatted as a string for LLM context.
@@ -135,14 +135,14 @@ class MemoryManager:
 
     def search_memories(self, user_id: str, query: str):
         """Wrapper for search to be safe."""
-        results = self.memory.search(query, user_id=user_id)
+        results = self.memory.search(query, filters={"user_id": user_id})
         # Mem0 returns a list of dictionaries.
         # Structure usually: [{'memory': '...', 'score': ...}, ...]
         return results
 
     def search(self, query: str, user_id: str):
         """Direct wrapper for Mem0 search."""
-        return self.memory.search(query, user_id=user_id)
+        return self.memory.search(query, filters={"user_id": user_id})
 
 
 # Singleton accessor

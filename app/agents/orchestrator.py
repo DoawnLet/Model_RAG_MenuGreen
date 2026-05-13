@@ -422,6 +422,29 @@ def general_agent(state: AgentState) -> dict:
     """
     Handle general questions with a conversational LLM.
     """
+    last_message = state["messages"][-1]
+    message_content = last_message.content if isinstance(last_message.content, str) else ""
+
+    # Fast local fallback for simple greetings so the app still works
+    # even when Gemini quota is temporarily exhausted.
+    greeting_text = message_content.strip().lower()
+    if greeting_text in {
+        "hi",
+        "hello",
+        "helo",
+        "hey",
+        "xin chào",
+        "chào",
+        "chao",
+    }:
+        return {
+            "messages": [
+                AIMessage(
+                    content="Xin chào! Mình có thể hỗ trợ tìm món ăn, gợi ý thực đơn, tính dinh dưỡng hoặc kiểm tra nguyên liệu cho bạn."
+                )
+            ]
+        }
+
     settings = get_settings()
     llm = ChatGoogleGenerativeAI(
         model=settings.llm_model,
@@ -436,20 +459,28 @@ def general_agent(state: AgentState) -> dict:
     {state.get("memory", "")}
     """
 
-    response = llm.invoke(
-        [
-            {"role": "system", "content": system_message},
-            *[
-                {
-                    "role": "user" if isinstance(m, HumanMessage) else "assistant",
-                    "content": m.content,
-                }
-                for m in state["messages"][-5:]
-            ],  # Last 5 messages
-        ]
-    )
-
-    return {"messages": [AIMessage(content=response.content)]}
+    try:
+        response = llm.invoke(
+            [
+                {"role": "system", "content": system_message},
+                *[
+                    {
+                        "role": "user" if isinstance(m, HumanMessage) else "assistant",
+                        "content": m.content,
+                    }
+                    for m in state["messages"][-5:]
+                ],  # Last 5 messages
+            ]
+        )
+        return {"messages": [AIMessage(content=response.content)]}
+    except Exception as e:
+        logger.error(f"General agent failed: {e}")
+        fallback = (
+            "⚠️ Dịch vụ AI Gemini đang tạm hết quota hoặc không sẵn sàng. "
+            "Bạn có thể thử lại sau ít phút, đổi API key Gemini khác, "
+            "hoặc hỏi theo dạng ngắn như tìm món ăn / tính calo / kiểm tra sức khỏe."
+        )
+        return {"messages": [AIMessage(content=fallback)]}
 
 
 def permission_denied_agent(state: AgentState) -> dict:

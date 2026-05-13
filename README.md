@@ -126,11 +126,8 @@ Model_RAG_MenuGreen/
 │       ├── csv_ingest.py         # Food.com / Recipe1M+ CSV importer
 │       └── auto_discovery.py     # Auto-crawl recipe discovery agent
 │
-├── schema.sql                    # Full database schema
 ├── database_setup.sql            # Main SQL bootstrap for fresh setup
-├── match_recipes_function.sql    # pgvector RPC function (legacy split file)
 ├── fix_rls.sql                   # Dev-only permissive RLS patch
-├── checkpoints.sql               # LangGraph checkpoint tables (legacy split file)
 │
 ├── tests/                        # pytest test suite
 ├── monitoring/                   # Prometheus/Grafana configs
@@ -219,23 +216,7 @@ psql -h your-db-host -d postgres -U postgres -f database_setup.sql
 | `user_inventory` | Pantry với expiry tracking |
 | `daily_logs` | Health metrics & mood |
 
-### 2. Tạo Vector Search Function
-
-```bash
-psql -h your-db-host -d postgres -U postgres -f match_recipes_function.sql
-```
-
-Nếu đã chạy `database_setup.sql` thì bước này không cần nữa vì RPC đã được gộp sẵn.
-
-### 3. LangGraph Persistence Tables
-
-```bash
-psql -h your-db-host -d postgres -U postgres -f checkpoints.sql
-```
-
-Nếu đã chạy `database_setup.sql` thì bước này không cần nữa vì checkpoint tables đã được gộp sẵn.
-
-### 4. Row Level Security (RLS)
+### 2. Row Level Security (RLS)
 
 ```bash
 # Development (permissive)

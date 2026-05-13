@@ -66,21 +66,35 @@ async def lifespan(app: FastAPI):
 
     # Initialize Postgres Persistence
     if settings.postgres_url:
-        print("💾 Initializing LangGraph Persistence...")
-        # Use sync ConnectionPool with PostgresSaver (properly typed)
-        pool: ConnectionPool[Connection[DictRow]] = ConnectionPool(
-            conninfo=settings.postgres_url,
-            kwargs={"row_factory": dict_row, "autocommit": True},
-            open=False,
-        )
-        pool.open()
-        checkpointer = PostgresSaver(pool)
-        checkpointer.setup()  # Create tables if not exist
-        app.state.orchestrator = get_compiled_graph(checkpointer)
-        app.state.db_pool = pool
+        print("?? Initializing LangGraph Persistence...")
+        pool: ConnectionPool[Connection[DictRow]] | None = None
+        try:
+            # Use sync ConnectionPool with PostgresSaver (properly typed)
+            pool = ConnectionPool(
+                conninfo=settings.postgres_url,
+                kwargs={"row_factory": dict_row, "autocommit": True},
+                open=False,
+            )
+            pool.open()
+            checkpointer = PostgresSaver(pool)
+            checkpointer.setup()  # Create tables if not exist
+            app.state.orchestrator = get_compiled_graph(checkpointer)
+            app.state.orchestrator_fallback = get_compiled_graph(checkpointer=None)
+            app.state.db_pool = pool
+        except Exception as e:
+            print(f"?? Postgres persistence disabled due to setup error: {e}")
+            if pool is not None:
+                try:
+                    pool.close()
+                except Exception:
+                    pass
+            app.state.orchestrator = get_compiled_graph(checkpointer=None)
+            app.state.orchestrator_fallback = app.state.orchestrator
+            app.state.db_pool = None
     else:
-        print("⚠️ No Postgres URL found. Persistence disabled.")
+        print("?? No Postgres URL found. Persistence disabled.")
         app.state.orchestrator = get_compiled_graph(checkpointer=None)
+        app.state.orchestrator_fallback = app.state.orchestrator
         app.state.db_pool = None
 
     yield
@@ -425,9 +439,32 @@ async def chat(request: ChatRequest):
         # Invoke orchestrator with timeout (P0 reliability)
         try:
             result = await asyncio.wait_for(
-                app.state.orchestrator.ainvoke(initial_state, config=config),
+                run_in_threadpool(
+                    app.state.orchestrator.invoke,
+                    initial_state,
+                    config,
+                ),
                 timeout=120.0,  # 2 minutes timeout for complex meal planning
             )
+        except Exception as invoke_error:
+            fallback_graph = getattr(app.state, "orchestrator_fallback", None)
+            persistence_error = str(invoke_error)
+            if fallback_graph is not None and (
+                "checkpoint" in persistence_error.lower()
+                or "jsonb_each_text" in persistence_error
+                or "operator does not exist: bytea -> unknown" in persistence_error
+                or type(invoke_error).__name__ == "NotImplementedError"
+            ):
+                logger.warning(
+                    "Persistence-backed invoke failed, retrying without persistence: %s",
+                    persistence_error,
+                )
+                result = await asyncio.wait_for(
+                    fallback_graph.ainvoke(initial_state, config=config),
+                    timeout=120.0,
+                )
+            else:
+                raise
         except asyncio.TimeoutError:
             logger.error(f"Orchestrator timeout after 120s for user {request.user_id}")
             raise MenuGreenException(

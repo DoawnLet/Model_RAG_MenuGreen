@@ -428,11 +428,7 @@ if __name__ == "__main__":
     test_streaming()
 ```
 
-**Run script:**
-
-```bash
-python test_chat.py
-```
+**Run examples manually via Swagger or a local HTTP client against `http://127.0.0.1:8000`.**
 
 ---
 
