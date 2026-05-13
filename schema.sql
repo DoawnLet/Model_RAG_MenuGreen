@@ -193,8 +193,10 @@ CREATE INDEX idx_shopping_lists_meal_plan_id ON shopping_lists(meal_plan_id);
 CREATE INDEX idx_shopping_lists_status ON shopping_lists(status);
 
 -- Vector similarity search (CRITICAL for RAG performance)
--- IVFFlat index for <-> operator (L2 distance) with 3072D Gemini embeddings
-CREATE INDEX idx_recipes_embedding ON recipes USING ivfflat (embedding vector_l2_ops) WITH (lists = 50);
+-- For 3072D embeddings, use half-precision expression indexing.
+CREATE INDEX idx_recipes_embedding
+    ON recipes
+    USING hnsw ((embedding::halfvec(3072)) halfvec_cosine_ops);
 
 -- =====================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES

@@ -69,7 +69,9 @@ async def lifespan(app: FastAPI):
         print("💾 Initializing LangGraph Persistence...")
         # Use sync ConnectionPool with PostgresSaver (properly typed)
         pool: ConnectionPool[Connection[DictRow]] = ConnectionPool(
-            conninfo=settings.postgres_url, kwargs={"row_factory": dict_row}, open=False
+            conninfo=settings.postgres_url,
+            kwargs={"row_factory": dict_row, "autocommit": True},
+            open=False,
         )
         pool.open()
         checkpointer = PostgresSaver(pool)

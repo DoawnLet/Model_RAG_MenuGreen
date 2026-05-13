@@ -127,9 +127,10 @@ Model_RAG_MenuGreen/
 │       └── auto_discovery.py     # Auto-crawl recipe discovery agent
 │
 ├── schema.sql                    # Full database schema
-├── match_recipes_function.sql    # pgvector RPC function
-├── fix_rls.sql                   # RLS policy fixes
-├── checkpoints.sql               # LangGraph checkpoint tables
+├── database_setup.sql            # Main SQL bootstrap for fresh setup
+├── match_recipes_function.sql    # pgvector RPC function (legacy split file)
+├── fix_rls.sql                   # Dev-only permissive RLS patch
+├── checkpoints.sql               # LangGraph checkpoint tables (legacy split file)
 │
 ├── tests/                        # pytest test suite
 ├── monitoring/                   # Prometheus/Grafana configs
@@ -200,9 +201,11 @@ DISCOVERY_MAX_PER_RUN=20
 
 ### 1. Tạo schema
 
+Khuyến nghị: dùng file tổng hợp `database_setup.sql` cho database mới.
+
 ```bash
-# Chạy trong Supabase SQL Editor
-psql -h your-db-host -d postgres -U postgres -f schema.sql
+# Chạy trong Supabase SQL Editor hoặc psql
+psql -h your-db-host -d postgres -U postgres -f database_setup.sql
 ```
 
 **Tables:**
@@ -222,13 +225,15 @@ psql -h your-db-host -d postgres -U postgres -f schema.sql
 psql -h your-db-host -d postgres -U postgres -f match_recipes_function.sql
 ```
 
-Tạo RPC `match_recipes(query_embedding, match_threshold, match_count)`.
+Nếu đã chạy `database_setup.sql` thì bước này không cần nữa vì RPC đã được gộp sẵn.
 
 ### 3. LangGraph Persistence Tables
 
 ```bash
 psql -h your-db-host -d postgres -U postgres -f checkpoints.sql
 ```
+
+Nếu đã chạy `database_setup.sql` thì bước này không cần nữa vì checkpoint tables đã được gộp sẵn.
 
 ### 4. Row Level Security (RLS)
 
