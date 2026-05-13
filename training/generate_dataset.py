@@ -1,16 +1,35 @@
 """
-generate_dataset.py
-Tạo training dataset cho Intent Classifier (7 classes)
-Chạy: python training/generate_dataset.py
-Output: training/intent_dataset.json
+Generate a compact but practical training dataset for the Menu Green
+intent classifier.
+
+Run:
+    python -X utf8 training/generate_dataset.py
+
+Output:
+    training/intent_dataset.json
 """
 
-import json
-import random
+from __future__ import annotations
 
-# ============================================================
-# DATASET: 7 intent classes (tiếng Việt + tiếng Anh mixed)
-# ============================================================
+import json
+import os
+import random
+from collections import Counter, defaultdict
+
+
+LABEL_ORDER = [
+    "recipe_search",
+    "nutrition_calc",
+    "inventory_check",
+    "meal_plan",
+    "web_browsing",
+    "calorie_lookup",
+    "general",
+    "unknown",
+]
+
+LABEL_MAP = {name: index for index, name in enumerate(LABEL_ORDER)}
+
 
 DATASET = {
     "recipe_search": [
@@ -50,18 +69,8 @@ DATASET = {
         "Gợi ý món nướng BBQ",
         "Cơm tấm làm như thế nào?",
         "Tìm công thức lẩu thái",
-        "Món ăn Miền Nam ngon",
-        "Cách nấu cháo gà",
-        "Tôi muốn làm bánh flan",
-        "Công thức chè ba màu",
         "Nấu bò kho ra sao?",
         "Gợi ý món từ tôm",
-        "Làm thế nào để nấu cơm chiên Dương Châu?",
-        "Có công thức bánh cuốn không?",
-        "Cách làm thit kho tàu",
-        "Tìm công thức làm nem",
-        "Món ăn healthy cho gym",
-        "High protein meal ideas",
         "Find me a recipe with eggs",
         "Simple soup recipe",
     ],
@@ -83,14 +92,14 @@ DATASET = {
         "My macros for muscle building",
         "Tôi cần bao nhiêu chất béo mỗi ngày?",
         "Tính calories mục tiêu để tăng cơ",
-        "Nhu cầu vitamin và khoáng chất của tôi?",
         "Chỉ số BMI của tôi?",
         "Tôi cần uống bao nhiêu nước mỗi ngày?",
         "Daily nutrition requirements for my profile",
         "Fat intake recommendation for me",
-        "Carb cycling calculation",
         "How many calories to lose weight?",
         "Protein requirement for athletes",
+        "Tính mức calo duy trì cho nam 25 tuổi",
+        "Tính giúp tôi lượng protein theo cân nặng",
     ],
     "inventory_check": [
         "Nguyên liệu nào sắp hết hạn?",
@@ -113,6 +122,12 @@ DATASET = {
         "Cần mua gì tuần này?",
         "Thức ăn nào gần hết hạn?",
         "Báo cáo tồn kho",
+        "Xem giúp tôi đồ ăn nào sắp hư",
+        "Kiểm tra xem còn trứng hay không",
+        "Trong kho còn bao nhiêu gạo",
+        "Danh sách nguyên liệu còn lại là gì",
+        "Fridge check for expiring items",
+        "Pantry status today",
     ],
     "meal_plan": [
         "Lên thực đơn tuần cho tôi",
@@ -135,13 +150,16 @@ DATASET = {
         "Lập kế hoạch ăn uống khoa học",
         "Weekly diet plan suggestion",
         "Create a balanced meal schedule",
+        "Lập thực đơn 3 ngày từ nguyên liệu sẵn có",
+        "Tạo menu giảm mỡ cho nữ văn phòng",
+        "Thực đơn theo ngân sách 1 tuần",
     ],
     "web_browsing": [
         "https://cookpad.com/vn/recipe/123456",
         "Đọc bài này giúp tôi: https://beptruong.edu.vn/mon-an/pho-bo",
         "Tóm tắt link này https://giaoducyte.vn/dinh-duong",
         "https://www.allrecipes.com/recipe/234567",
-        "Lấy công thức từ https://yummly.com/recipe/...",
+        "Lấy công thức từ https://yummly.com/recipe/sample",
         "Read this recipe: https://tasty.co/recipe/chicken-soup",
         "Summarize https://healthline.com/nutrition/protein",
         "Crawl nội dung từ link: https://cookpad.com",
@@ -151,7 +169,30 @@ DATASET = {
         "Tóm tắt nội dung https://vinmec.com/vi/dinh-duong",
         "Get recipe from https://recipetineats.com",
         "https://www.seriouseats.com/recipes",
-        "https://food52.com/recipes/popular",
+        "Mở link này và đọc giúp tôi https://example.com/recipe",
+        "Check this article https://example.org/nutrition",
+    ],
+    "calorie_lookup": [
+        "Phở bò bao nhiêu calo?",
+        "Bún bò có bao nhiêu protein?",
+        "Tính calo cơm tấm",
+        "1 tô hủ tiếu bao nhiêu kcal?",
+        "Calo trong bánh mì thịt là bao nhiêu?",
+        "Món này có bao nhiêu chất béo?",
+        "Lượng protein của ức gà luộc",
+        "Một ly sinh tố xoài có bao nhiêu calo?",
+        "Calories in fried rice",
+        "How many calories are in pho?",
+        "Nutrition facts for banh mi",
+        "Cơm gà xối mỡ bao nhiêu calo",
+        "100g đậu hũ có bao nhiêu protein",
+        "Bánh flan có bao nhiêu đường",
+        "Tính dinh dưỡng của salad cá ngừ",
+        "Lẩu thái có nhiều calo không",
+        "Một quả trứng bao nhiêu calo",
+        "Calo của trà sữa là bao nhiêu",
+        "Protein trong bò bít tết",
+        "Nutritional value of spring rolls",
     ],
     "general": [
         "Ăn gì để tăng cơ?",
@@ -179,7 +220,7 @@ DATASET = {
         "Thực phẩm giúp giảm stress",
         "Lợi ích của probiotics",
         "Ăn chay có đủ dinh dưỡng không?",
-        "Menu green là gì?",
+        "Menu Green là gì?",
         "Bạn có thể giúp gì cho tôi?",
         "Xin chào",
         "Tôi muốn sống khỏe hơn",
@@ -193,7 +234,7 @@ DATASET = {
         "Chơi game gì hay?",
         "Code Python làm sao?",
         "Phim hay nên xem",
-        "Newss hôm nay có gì mới?",
+        "News hôm nay có gì mới?",
         "Tỉ giá đô la",
         "Xem bói",
         "Who won the last election?",
@@ -206,68 +247,87 @@ DATASET = {
         "2 + 2 = mấy?",
         "Dịch tiếng Nhật sang tiếng Việt",
         "Tìm nhà trọ giá rẻ",
-    ]
+        "Mở nhạc giúp tôi",
+        "Lịch thi đấu bóng đá hôm nay",
+        "Viết email xin nghỉ phép",
+        "Sửa lỗi wifi như thế nào",
+        "Tạo code C# đăng nhập",
+        "How to center a div in CSS?",
+        "Mua laptop nào tốt",
+        "Bảng giá chứng khoán",
+    ],
 }
 
-LABEL_MAP = {
-    "recipe_search": 0,
-    "nutrition_calc": 1,
-    "inventory_check": 2,
-    "meal_plan": 3,
-    "web_browsing": 4,
-    "general": 5,
-    "unknown": 6,
-}
 
-def generate_dataset(output_path="training/intent_dataset.json"):
-    """Tạo dataset với augmentation nhẹ."""
+def _stratified_split(samples: list[dict], val_ratio: float = 0.2, seed: int = 42):
+    """Keep label distribution stable across train/validation."""
+    rng = random.Random(seed)
+    grouped = defaultdict(list)
+    for sample in samples:
+        grouped[sample["label_name"]].append(sample)
+
+    train: list[dict] = []
+    val: list[dict] = []
+
+    for label_name, label_samples in grouped.items():
+        rng.shuffle(label_samples)
+        val_count = max(1, round(len(label_samples) * val_ratio))
+        val.extend(label_samples[:val_count])
+        train.extend(label_samples[val_count:])
+
+    rng.shuffle(train)
+    rng.shuffle(val)
+    return train, val
+
+
+def generate_dataset(output_path: str = "training/intent_dataset.json"):
+    """Generate a clean JSON dataset with stratified train/val split."""
     samples = []
 
-    for label_name, texts in DATASET.items():
-        label_id = LABEL_MAP[label_name]
+    for label_name in LABEL_ORDER:
+        texts = DATASET[label_name]
         for text in texts:
-            samples.append({
-                "text": text,
-                "label": label_id,
-                "label_name": label_name
-            })
+            samples.append(
+                {
+                    "text": text.strip(),
+                    "label": LABEL_MAP[label_name],
+                    "label_name": label_name,
+                }
+            )
 
-    # Shuffle
-    random.seed(42)
-    random.shuffle(samples)
-
-    # Split train/val (80/20)
-    split = int(len(samples) * 0.8)
-    train = samples[:split]
-    val = samples[split:]
+    train, val = _stratified_split(samples, val_ratio=0.2, seed=42)
 
     result = {
         "train": train,
         "val": val,
         "label_map": LABEL_MAP,
-        "num_labels": len(LABEL_MAP),
-        "total": len(samples)
+        "label_order": LABEL_ORDER,
+        "num_labels": len(LABEL_ORDER),
+        "total": len(samples),
     }
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
+    with open(output_path, "w", encoding="utf-8") as file:
+        json.dump(result, file, ensure_ascii=False, indent=2)
 
-    print(f"✅ Dataset generated: {len(samples)} samples")
-    print(f"   Train: {len(train)} | Val: {len(val)}")
-    print(f"   Labels: {list(LABEL_MAP.keys())}")
-    print(f"   Saved to: {output_path}")
+    print(f"Dataset generated: {len(samples)} samples")
+    print(f"  Train: {len(train)} | Val: {len(val)}")
+    print(f"  Labels: {LABEL_ORDER}")
 
-    # Print per-class count
-    from collections import Counter
-    counts = Counter(s["label_name"] for s in samples)
-    print("\nPer-class count:")
-    for cls, cnt in sorted(counts.items()):
-        print(f"  {cls:<20} {cnt} samples")
+    total_counts = Counter(sample["label_name"] for sample in samples)
+    train_counts = Counter(sample["label_name"] for sample in train)
+    val_counts = Counter(sample["label_name"] for sample in val)
 
+    print("\nPer-class counts:")
+    for label_name in LABEL_ORDER:
+        print(
+            f"  {label_name:<20} total={total_counts[label_name]:<3} "
+            f"train={train_counts[label_name]:<3} val={val_counts[label_name]:<3}"
+        )
+
+    print(f"\nSaved to: {output_path}")
     return result
 
 
 if __name__ == "__main__":
-    import os
     os.makedirs("training", exist_ok=True)
     generate_dataset()

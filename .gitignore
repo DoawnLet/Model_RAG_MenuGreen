@@ -65,6 +65,7 @@ grafana_data/
 
 # Model Checkpoints and Large binaries
 menu_green_intent_model/
+models/intent_onnx/
 *.pt
 *.bin
 *.pth
