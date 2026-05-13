@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # App
     app_name: str = "Menu Green"
     debug: bool = False
+    serve_frontend: bool = False
+    enable_training_endpoint: bool = False
+    worker_timeout_seconds: float = 120.0
+    cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
     # Auto-Discovery Agent
     discovery_delay_seconds: float = 2.0

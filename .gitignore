@@ -66,6 +66,8 @@ grafana_data/
 # Model Checkpoints and Large binaries
 menu_green_intent_model/
 models/intent_onnx/
+dist/intent_onnx_runtime/
+dist/intent_onnx_runtime.zip
 *.pt
 *.bin
 *.pth
