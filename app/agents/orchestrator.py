@@ -185,6 +185,195 @@ async def classify_intent(state: AgentState) -> dict:
     return {"intent": intent}
 
 
+async def classify_intent_worker(state: AgentState) -> dict:
+    """
+    Worker-oriented classifier that also returns intent metadata for
+    review/retraining queues.
+    """
+    from app.core.memory import get_memory_manager
+
+    settings = get_settings()
+
+    user_id = state.get("user_id") or "default_user"
+    memory_manager = get_memory_manager()
+    last_msg_content = state["messages"][-1].content
+    if isinstance(last_msg_content, str):
+        memories = memory_manager.get_formatted_context(user_id, last_msg_content)
+    else:
+        memories = ""
+    state["memory"] = memories
+
+    last_message = state["messages"][-1]
+    if not isinstance(last_message.content, str):
+        return {
+            "intent": "general",
+            "intent_meta": {
+                "source": "non_text_default",
+                "confidence": None,
+                "review_reasons": ["non_text_message"],
+                "used_gemini_fallback": False,
+            },
+        }
+
+    message_content = last_message.content
+    lowered_message = message_content.lower()
+
+    url_pattern = r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+"
+    if re.search(url_pattern, message_content):
+        return {
+            "intent": "web_browsing",
+            "intent_meta": {
+                "source": "heuristic_url",
+                "confidence": 1.0,
+                "review_reasons": [],
+                "used_gemini_fallback": False,
+            },
+        }
+
+    calorie_keywords = [
+        "bao nhiêu calo",
+        "bao nhieu calo",
+        "kcal",
+        "calories",
+        "nutrition facts",
+        "bao nhiêu protein",
+        "bao nhieu protein",
+        "bao nhiêu carb",
+        "bao nhieu carb",
+        "bao nhiêu chất béo",
+        "bao nhieu chat beo",
+    ]
+    personal_calc_keywords = [
+        "bmr",
+        "tdee",
+        "macro",
+        "mỗi ngày",
+        "moi ngay",
+        "cân nặng",
+        "can nang",
+        "chiều cao",
+        "chieu cao",
+        "giảm cân",
+        "giam can",
+        "tăng cơ",
+        "tang co",
+    ]
+    if any(keyword in lowered_message for keyword in calorie_keywords) and not any(
+        keyword in lowered_message for keyword in personal_calc_keywords
+    ):
+        return {
+            "intent": "calorie_lookup",
+            "intent_meta": {
+                "source": "heuristic_calorie_lookup",
+                "confidence": 0.99,
+                "review_reasons": [],
+                "used_gemini_fallback": False,
+            },
+        }
+
+    fallback_reason = None
+    try:
+        from app.core.intent_classifier_onnx import get_onnx_classifier
+
+        onnx_classifier = get_onnx_classifier()
+        if onnx_classifier is not None:
+            prediction = onnx_classifier.predict_with_score(message_content)
+            threshold = settings.intent_confidence_threshold
+            review_reasons: list[str] = []
+            if prediction["score"] < threshold:
+                intent = "general"
+                source = "onnx_low_confidence"
+                review_reasons.append("onnx_low_confidence")
+            else:
+                intent = prediction["label"]
+                source = "onnx"
+
+            logger.info(
+                "[ONNX] Intent classified: %s (score=%.3f, source=%s)",
+                intent,
+                prediction["score"],
+                source,
+            )
+            return {
+                "intent": intent,
+                "intent_meta": {
+                    "source": source,
+                    "confidence": round(float(prediction["score"]), 4),
+                    "predicted_label": prediction["label"],
+                    "review_reasons": review_reasons,
+                    "used_gemini_fallback": False,
+                },
+            }
+        fallback_reason = "onnx_unavailable"
+    except Exception as exc:
+        logger.warning(f"[ONNX] Classification failed, falling back to Gemini: {exc}")
+        fallback_reason = str(exc)
+
+    llm = ChatGoogleGenerativeAI(
+        model=settings.llm_model,
+        google_api_key=settings.google_api_key,
+        temperature=0,
+    )
+
+    try:
+        response = await llm.ainvoke(
+            [
+                {"role": "system", "content": INTENT_PROMPT},
+                {"role": "user", "content": message_content},
+            ]
+        )
+    except Exception as exc:
+        logger.error(f"Intent classification failed: {exc}")
+        return {
+            "intent": "general",
+            "intent_meta": {
+                "source": "gemini_error_default",
+                "confidence": None,
+                "review_reasons": ["gemini_classification_error"],
+                "used_gemini_fallback": True,
+                "fallback_reason": str(exc),
+            },
+        }
+
+    if not isinstance(response.content, str):
+        return {
+            "intent": "general",
+            "intent_meta": {
+                "source": "gemini_non_text_default",
+                "confidence": None,
+                "review_reasons": ["gemini_non_text_response"],
+                "used_gemini_fallback": True,
+                "fallback_reason": fallback_reason,
+            },
+        }
+
+    intent = response.content.strip().lower()
+    valid_intents = [
+        "recipe_search",
+        "nutrition_calc",
+        "inventory_check",
+        "meal_plan",
+        "calorie_lookup",
+        "general",
+        "web_browsing",
+        "unknown",
+    ]
+    if intent not in valid_intents:
+        matched_intent = next((valid for valid in valid_intents if valid in intent), None)
+        intent = matched_intent or "general"
+
+    return {
+        "intent": intent,
+        "intent_meta": {
+            "source": "gemini_fallback",
+            "confidence": None,
+            "review_reasons": ["gemini_fallback"],
+            "used_gemini_fallback": True,
+            "fallback_reason": fallback_reason,
+        },
+    }
+
+
 # ============================================================================
 # Permission Check
 # ============================================================================
@@ -624,7 +813,7 @@ def create_orchestrator(checkpointer=None):
     workflow = StateGraph(AgentState)
 
     # Add nodes
-    workflow.add_node("classify_intent", classify_intent)
+    workflow.add_node("classify_intent", classify_intent_worker)
     workflow.add_node("nutrition", nutrition_agent)
     workflow.add_node("inventory", inventory_agent)
     workflow.add_node("recipe", recipe_agent)

@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from app.api_models import ChatRequest, SubscriptionTier
 from app.core.config import get_settings
 from app.core.errors import ErrorCode, MenuGreenException
+from app.core.review_queue import append_review_case
 from app.core.supabase_client import SupabaseClient
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ class ChatExecutionResult:
     subscription_tier: SubscriptionTier
     duration_ms: float
     persistence_fallback_used: bool
+    intent_source: str | None
+    intent_confidence: float | None
+    review_queued: bool
 
 
 def _is_valid_uuid(value: str | None) -> bool:
@@ -154,6 +158,17 @@ async def execute_chat(app, request: ChatRequest) -> ChatExecutionResult:
 
     ai_message = result["messages"][-1]
     response_text = ai_message.content if isinstance(ai_message.content, str) else str(ai_message.content)
+    intent_meta = result.get("intent_meta") or {}
+    review_queued = maybe_enqueue_review_case(
+        request=request,
+        thread_id=thread_id,
+        result=result,
+        intent_meta=intent_meta,
+        response_text=response_text,
+        subscription_tier=subscription_tier,
+        duration_ms=round(duration_ms, 2),
+        persistence_fallback_used=fallback_used,
+    )
 
     return ChatExecutionResult(
         request_id=request_id,
@@ -163,4 +178,55 @@ async def execute_chat(app, request: ChatRequest) -> ChatExecutionResult:
         subscription_tier=subscription_tier,
         duration_ms=round(duration_ms, 2),
         persistence_fallback_used=fallback_used,
+        intent_source=intent_meta.get("source"),
+        intent_confidence=intent_meta.get("confidence"),
+        review_queued=review_queued,
+    )
+
+
+def maybe_enqueue_review_case(
+    request: ChatRequest,
+    thread_id: str,
+    result: dict,
+    intent_meta: dict,
+    response_text: str,
+    subscription_tier: SubscriptionTier,
+    duration_ms: float,
+    persistence_fallback_used: bool,
+) -> bool:
+    settings = get_settings()
+    if not settings.enable_review_queue:
+        return False
+
+    review_reasons = list(intent_meta.get("review_reasons") or [])
+    confidence = intent_meta.get("confidence")
+    if confidence is not None and confidence < settings.intent_confidence_threshold:
+        if "low_confidence" not in review_reasons:
+            review_reasons.append("low_confidence")
+    if persistence_fallback_used and "persistence_fallback" not in review_reasons:
+        review_reasons.append("persistence_fallback")
+
+    if not review_reasons:
+        return False
+
+    return append_review_case(
+        {
+            "request_id": request.request_id or thread_id,
+            "thread_id": thread_id,
+            "user_id": request.user_id,
+            "text": request.message,
+            "predicted_intent": result.get("intent"),
+            "intent_source": intent_meta.get("source"),
+            "intent_confidence": confidence,
+            "predicted_label": intent_meta.get("predicted_label"),
+            "used_gemini_fallback": intent_meta.get("used_gemini_fallback", False),
+            "fallback_reason": intent_meta.get("fallback_reason"),
+            "persistence_fallback_used": persistence_fallback_used,
+            "review_reasons": review_reasons,
+            "subscription_tier": subscription_tier,
+            "duration_ms": duration_ms,
+            "response_preview": response_text[:500],
+            "conversation_history": [message.model_dump() for message in request.conversation_history],
+            "review_status": "pending",
+        }
     )

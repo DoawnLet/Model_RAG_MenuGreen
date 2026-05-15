@@ -280,9 +280,12 @@ async def worker_chat(request: ChatRequest, http_request: Request):
             thread_id=result.thread_id,
             response=result.response,
             intent=result.intent,
+            intent_source=result.intent_source,
+            intent_confidence=result.intent_confidence,
             subscription_tier=result.subscription_tier,
             duration_ms=result.duration_ms,
             persistence_fallback_used=result.persistence_fallback_used,
+            review_queued=result.review_queued,
         )
         json_response = JSONResponse(content=response.model_dump())
         json_response.headers["X-Request-Id"] = result.request_id
@@ -307,6 +310,9 @@ async def chat(request: ChatRequest):
             intent=result.intent,
             request_id=result.request_id,
             thread_id=result.thread_id,
+            review_queued=result.review_queued,
+            intent_source=result.intent_source,
+            intent_confidence=result.intent_confidence,
         )
     except MenuGreenException:
         raise

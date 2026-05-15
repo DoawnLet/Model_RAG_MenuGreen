@@ -30,6 +30,9 @@ class ChatResponse(BaseModel):
     intent: Optional[str] = None
     request_id: Optional[str] = None
     thread_id: Optional[str] = None
+    review_queued: bool = False
+    intent_source: Optional[str] = None
+    intent_confidence: Optional[float] = None
 
 
 class WorkerChatResponse(BaseModel):
@@ -37,9 +40,12 @@ class WorkerChatResponse(BaseModel):
     thread_id: str
     response: str
     intent: Optional[str] = None
+    intent_source: Optional[str] = None
+    intent_confidence: Optional[float] = None
     subscription_tier: SubscriptionTier = "free"
     duration_ms: float
     persistence_fallback_used: bool = False
+    review_queued: bool = False
     source: str = "menu-green-ai-worker"
 
 

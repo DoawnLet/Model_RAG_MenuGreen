@@ -24,3 +24,4 @@ class AgentState(TypedDict):
     subscription_tier: Literal["free", "saving", "energy", "performance"]
     context: dict
     memory: Optional[str]
+    intent_meta: Optional[dict]

@@ -47,6 +47,9 @@ DEBUG=true
 SERVE_FRONTEND=false
 ENABLE_TRAINING_ENDPOINT=false
 WORKER_TIMEOUT_SECONDS=120
+ENABLE_REVIEW_QUEUE=true
+REVIEW_QUEUE_PATH=training/review_queue.jsonl
+INTENT_CONFIDENCE_THRESHOLD=0.55
 ```
 
 Notes:
@@ -54,6 +57,31 @@ Notes:
 - `SERVE_FRONTEND=false` keeps the API in worker mode
 - `POSTGRES_URL` is optional and only used for LangGraph persistence
 - backend should use a Supabase server-side key, not a publishable key
+- low-confidence and fallback cases are logged to `training/review_queue.jsonl`
+
+## Setup stability notes (multi-machine)
+
+If one machine works and another fails after `pip install -r requirements.txt`,
+the common causes are environment drift and missing ONNX runtime dependencies.
+
+Recommended baseline:
+
+- Python `3.11.x`
+- Fresh virtual environment per machine
+- Upgrade installer tools before install:
+  `python -m pip install -U pip setuptools wheel`
+
+Quick verification after install:
+
+```powershell
+python -c "import onnxruntime, onnx, transformers, optimum, sentencepiece; print('onnx stack ok')"
+python -c "from app.core.intent_classifier_onnx import get_onnx_classifier; print('intent loader import ok')"
+python -c "from app.core.embedding_onnx import is_onnx_available; print('embedding onnx available =', is_onnx_available())"
+```
+
+If startup logs show Postgres checkpoint errors (`jsonb_each_text` / `bytea -> unknown`),
+the worker auto-falls back to non-persistent mode. Chat still runs, but your
+PostgreSQL checkpoint schema/version is mismatched and should be aligned.
 
 ## Database setup
 
@@ -86,6 +114,22 @@ Model binaries are ignored from git because GitHub blocks files larger than
 Bundle instructions:
 
 - [MODEL_BUNDLE_SETUP.md](/D:/EXE/Model_RAG_MenuGreen/MODEL_BUNDLE_SETUP.md)
+
+## Continual learning queue
+
+The worker automatically writes difficult cases to:
+
+```text
+training/review_queue.jsonl
+```
+
+Typical triggers:
+
+- ONNX low confidence
+- Gemini fallback
+- persistence fallback
+
+These records are intended for later review and batch retraining.
 
 ## C# gateway sample
 

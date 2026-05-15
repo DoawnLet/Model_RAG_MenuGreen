@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     enable_training_endpoint: bool = False
     worker_timeout_seconds: float = 120.0
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
+    enable_review_queue: bool = True
+    review_queue_path: str = "training/review_queue.jsonl"
+    intent_confidence_threshold: float = 0.55
 
     # Auto-Discovery Agent
     discovery_delay_seconds: float = 2.0
